@@ -136,7 +136,7 @@ Tickets use the prefix `VAI-NNN`, numbered sequentially (e.g. `VAI-001`, `VAI-00
 
 | Date | Ticket | Title | Commit |
 |------|--------|-------|--------|
-| 2026-08-16 | VAI-001 | Scaffold the real Cargo workspace + export toolchain | *(pending — see next commit)* |
+| 2026-08-16 | VAI-001 | Scaffold the real Cargo workspace + export toolchain | `5b4815c` |
 | 2026-08-16 | — | ai-sdlc-bootstrap scaffold | `ba0f453` |
 
 *When a ticket is closed: move it to this table, set the commit hash, and remove it from the Open section. Keep the last ~20 closures here; archive older ones to `docs/CHANGELOG.md`.*

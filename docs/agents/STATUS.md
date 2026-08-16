@@ -38,7 +38,7 @@ The next logical work, in priority order. Update at the end of every session.
 
 | Date | Ticket | Summary | Commit |
 |------|--------|---------|--------|
-| 2026-08-16 | VAI-001 | Cargo workspace + `ort` EP scaffold, export toolchain pins | *(pending — see next commit)* |
+| 2026-08-16 | VAI-001 | Cargo workspace + `ort` EP scaffold, export toolchain pins | `5b4815c` |
 | 2026-08-16 | — | ai-sdlc-bootstrap scaffold | `ba0f453` |
 
 ---
