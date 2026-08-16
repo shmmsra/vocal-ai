@@ -25,7 +25,12 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-          cache: 'pip'
+          # No `cache: 'pip'`: the export/ toolchain (torch, diffusers, transformers,
+          # gradio, ...) plus the exported .onnx files and HuggingFace checkpoints
+          # written during parity-check tests fill the runner's ephemeral disk enough
+          # that the post-job pip-cache-save step fails with "No space left on
+          # device" (non-fatal to the gate itself, but noisy). Not worth chasing —
+          # this install isn't the slow part of the job.
 
       - name: Install Python export/ dependencies
         run: pip install -r export/requirements.txt
