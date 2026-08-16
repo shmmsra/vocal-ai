@@ -60,8 +60,10 @@ What becomes easier? What becomes harder? What new commitments does this create?
 | # | Title | Status |
 |---|-------|--------|
 | [0001](0001-adopt-ai-sdlc.md) | Adopt the ai-sdlc-bootstrap workflow | Accepted |
+| [0002](0002-onnx-plus-rust-runtime.md) | Export to ONNX and re-drive the loops from native Rust | Accepted |
+| [0003](0003-rust-over-cpp.md) | Rust for the native runtime (evaluated against C++) | Accepted |
 
-*Add new rows as ADRs accumulate — the ONNX-vs-Python-wrapper and Rust-vs-C++ decisions from `docs/phase1-onnx-rust-cli-plan.md` (§2.1, §2.2) are good ADR-002/003 candidates once Milestone 1 starts.*
+*Add new rows as ADRs accumulate.*
 
 ---
 

@@ -1,0 +1,202 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mxfile host="app.diagrams.net" version="29.5.2">
+  <diagram name="Page-1" id="vocalAiArchitecture001">
+    <mxGraphModel dx="1900" dy="1000" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="0" pageScale="1" pageWidth="1850" pageHeight="1080" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+
+        <!-- Title & subtitle -->
+        <mxCell id="2" parent="1" vertex="1" style="text;html=1;fontSize=22;fontStyle=1;align=center;fillColor=none;strokeColor=none;fontColor=#212121;" value="vocal-ai — Export Toolchain → Runtime Inference Pipeline">
+          <mxGeometry x="450" y="10" width="900" height="36" as="geometry" />
+        </mxCell>
+        <mxCell id="3" parent="1" vertex="1" style="text;html=1;fontSize=12;fontStyle=2;align=center;fillColor=none;strokeColor=none;fontColor=#9E9E9E;" value="Two separate programs: a Python export toolchain (dev-time only) produces ONNX files consumed by one self-contained Rust binary (runtime)">
+          <mxGeometry x="350" y="48" width="1100" height="22" as="geometry" />
+        </mxCell>
+
+        <!-- ============ SECTION 1: Dev-time export ============ -->
+        <mxCell id="10" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ECEFF1;strokeColor=#607D8B;dashed=1;strokeWidth=2;verticalAlign=top;fontSize=12;fontColor=#455A64;arcSize=4;align=left;spacingLeft=12;spacingTop=6;fontStyle=1;" value="SECTION 1 — Dev-time export (Python + PyTorch; runs once per model version; never shipped to users)">
+          <mxGeometry x="40" y="100" width="1250" height="210" as="geometry" />
+        </mxCell>
+
+        <mxCell id="11" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#455A64;strokeColor=#263238;fontColor=#FFFFFF;fontStyle=1;fontSize=13;shadow=1;arcSize=20;" value="PyTorch weights&lt;br&gt;&lt;font style=&quot;font-size:10px;font-weight:normal&quot;&gt;ve.safetensors, t3_cfg.safetensors, s3gen.safetensors, conds.pt — pretrained, not made by us&lt;/font&gt;">
+          <mxGeometry x="70" y="160" width="190" height="100" as="geometry" />
+        </mxCell>
+        <mxCell id="12" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E53935;strokeColor=#B71C1C;fontColor=#FFFFFF;fontStyle=1;fontSize=13;shadow=1;arcSize=20;" value="export/*.py scripts&lt;br&gt;&lt;font style=&quot;font-size:10px;font-weight:normal&quot;&gt;freeze each PyTorch sub-network into a static ONNX graph (export_ve, export_s3tokenizer, export_hifigan, export_s3gen, export_t3, export_perthnet)&lt;/font&gt;">
+          <mxGeometry x="320" y="160" width="250" height="100" as="geometry" />
+        </mxCell>
+        <mxCell id="13" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#00695C;strokeColor=#004D40;fontColor=#FFFFFF;fontStyle=1;fontSize=13;shadow=1;arcSize=20;" value="parity_check.py&lt;br&gt;&lt;font style=&quot;font-size:10px;font-weight:normal&quot;&gt;gate: ONNX output vs. PyTorch output must match within tolerance before a graph can ship&lt;/font&gt;">
+          <mxGeometry x="630" y="160" width="220" height="100" as="geometry" />
+        </mxCell>
+        <mxCell id="14" parent="1" vertex="1" style="shape=document;whiteSpace=wrap;html=1;fillColor=#E8F5E9;strokeColor=#43A047;fontColor=#1B5E20;fontStyle=1;fontSize=13;shadow=1;size=0.15;" value="ONNX + tokenizer files&lt;br&gt;&lt;font style=&quot;font-size:10px;font-weight:normal&quot;&gt;4 × .onnx graphs + tokenizer.json → bundled into models/ (never committed to git)&lt;/font&gt;">
+          <mxGeometry x="910" y="160" width="250" height="100" as="geometry" />
+        </mxCell>
+
+        <mxCell id="15" parent="1" vertex="1" style="text;html=1;fontSize=10;align=left;fillColor=none;strokeColor=none;fontColor=#78909C;fontStyle=2;" value="Nothing in this section ever reaches an end user — it only produces files for Section 2 to consume.">
+          <mxGeometry x="70" y="270" width="1090" height="20" as="geometry" />
+        </mxCell>
+
+        <mxCell id="16" edge="1" parent="1" source="11" target="12" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#37474F;strokeWidth=2;exitX=1;exitY=0.5;entryX=0;entryY=0.5;">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="17" edge="1" parent="1" source="12" target="13" value="export" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#37474F;strokeWidth=2;exitX=1;exitY=0.5;entryX=0;entryY=0.5;fontSize=10;">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="18" edge="1" parent="1" source="13" target="14" value="pass" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#2E7D32;strokeWidth=2;exitX=1;exitY=0.5;entryX=0;entryY=0.5;fontSize=10;fontColor=#2E7D32;">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- ============ SECTION 2: Runtime inference pipeline ============ -->
+        <mxCell id="20" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ECEFF1;strokeColor=#607D8B;dashed=1;strokeWidth=2;verticalAlign=top;fontSize=12;fontColor=#455A64;arcSize=4;align=left;spacingLeft=12;spacingTop=6;fontStyle=1;" value="SECTION 2 — Runtime inference pipeline: one Rust binary (vocalai-cli + vocalai-core) — no Python, no PyTorch, no internet; this is what ships to users">
+          <mxGeometry x="40" y="370" width="1680" height="400" as="geometry" />
+        </mxCell>
+
+        <mxCell id="21" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFF8E1;strokeColor=#F9A825;dashed=1;strokeWidth=1.5;fontColor=#E65100;fontStyle=1;fontSize=12;arcSize=12;shadow=1;" value="session.rs&lt;br&gt;&lt;font style=&quot;font-size:10px;font-weight:normal&quot;&gt;ONNX Runtime execution-provider selection — CoreML→CPU (macOS) / CUDA→CPU (Win/Linux) — used by every forward pass below&lt;/font&gt;">
+          <mxGeometry x="855" y="400" width="260" height="60" as="geometry" />
+        </mxCell>
+
+        <mxCell id="22" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#455A64;strokeColor=#263238;fontColor=#FFFFFF;fontStyle=1;fontSize=13;shadow=1;arcSize=20;" value="Input&lt;br&gt;&lt;font style=&quot;font-size:10px;font-weight:normal&quot;&gt;text string + optional reference .wav (--voice)&lt;/font&gt;">
+          <mxGeometry x="70" y="490" width="190" height="90" as="geometry" />
+        </mxCell>
+        <mxCell id="23" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E3F2FD;strokeColor=#1565C0;fontColor=#0D47A1;fontStyle=1;fontSize=12;shadow=1;arcSize=20;" value="tokenizer.rs&lt;br&gt;&lt;font style=&quot;font-size:10px;font-weight:normal&quot;&gt;text → token IDs (tokenizer.json lookup — no neural net)&lt;/font&gt;">
+          <mxGeometry x="320" y="490" width="180" height="90" as="geometry" />
+        </mxCell>
+        <mxCell id="24" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E53935;strokeColor=#B71C1C;fontColor=#FFFFFF;fontStyle=1;fontSize=13;shadow=1;arcSize=20;" value="t3.rs — T3 model&lt;br&gt;&lt;font style=&quot;font-size:10px;font-weight:normal&quot;&gt;token IDs → speech tokens (autoregressive loop: one ONNX forward pass per token, KV-cache)&lt;/font&gt;">
+          <mxGeometry x="560" y="490" width="240" height="90" as="geometry" />
+        </mxCell>
+        <mxCell id="25" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E53935;strokeColor=#B71C1C;fontColor=#FFFFFF;fontStyle=1;fontSize=13;shadow=1;arcSize=20;" value="s3gen.rs — S3Gen + HiFiGAN&lt;br&gt;&lt;font style=&quot;font-size:10px;font-weight:normal&quot;&gt;speech tokens → mel (Euler ODE loop, ~10 steps) → HiFiGAN graph → raw waveform&lt;/font&gt;">
+          <mxGeometry x="860" y="490" width="270" height="90" as="geometry" />
+        </mxCell>
+        <mxCell id="26" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E3F2FD;strokeColor=#1565C0;fontColor=#0D47A1;fontStyle=1;fontSize=12;shadow=1;arcSize=20;" value="watermark.rs&lt;br&gt;&lt;font style=&quot;font-size:10px;font-weight:normal&quot;&gt;PerthNet graph — stamps an inaudible watermark onto the waveform (one forward pass)&lt;/font&gt;">
+          <mxGeometry x="1190" y="490" width="200" height="90" as="geometry" />
+        </mxCell>
+        <mxCell id="27" parent="1" vertex="1" style="shape=document;whiteSpace=wrap;html=1;fillColor=#E8F5E9;strokeColor=#43A047;fontColor=#1B5E20;fontStyle=1;fontSize=13;shadow=1;size=0.15;" value="out.wav&lt;br&gt;&lt;font style=&quot;font-size:10px;font-weight:normal&quot;&gt;24 kHz mono waveform — final CLI output&lt;/font&gt;">
+          <mxGeometry x="1450" y="490" width="200" height="90" as="geometry" />
+        </mxCell>
+
+        <mxCell id="28" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E3F2FD;strokeColor=#1565C0;fontColor=#0D47A1;fontStyle=1;fontSize=12;shadow=1;arcSize=20;" value="voice_encoder.rs&lt;br&gt;&lt;font style=&quot;font-size:10px;font-weight:normal&quot;&gt;reference .wav → speaker embedding (replaces the built-in default voice)&lt;/font&gt;">
+          <mxGeometry x="560" y="630" width="240" height="90" as="geometry" />
+        </mxCell>
+
+        <mxCell id="29" parent="1" vertex="1" style="text;html=1;fontSize=10;align=left;fillColor=none;strokeColor=none;fontColor=#78909C;fontStyle=2;" value="Optional zero-shot voice-cloning path — only runs when --voice is passed; everything else is the default-voice pipeline.">
+          <mxGeometry x="560" y="722" width="560" height="20" as="geometry" />
+        </mxCell>
+
+        <!-- Main spine edges -->
+        <mxCell id="30" edge="1" parent="1" source="22" target="23" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#37474F;strokeWidth=2;exitX=1;exitY=0.5;entryX=0;entryY=0.5;">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="31" edge="1" parent="1" source="23" target="24" value="token IDs" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#37474F;strokeWidth=2;exitX=1;exitY=0.5;entryX=0;entryY=0.5;fontSize=10;">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="32" edge="1" parent="1" source="24" target="25" value="speech tokens" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#37474F;strokeWidth=2;exitX=1;exitY=0.5;entryX=0;entryY=0.5;fontSize=10;">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="33" edge="1" parent="1" source="25" target="26" value="raw waveform" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#37474F;strokeWidth=2;exitX=1;exitY=0.5;entryX=0;entryY=0.5;fontSize=10;">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="34" edge="1" parent="1" source="26" target="27" value="watermarked waveform" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#37474F;strokeWidth=2;exitX=1;exitY=0.5;entryX=0;entryY=0.5;fontSize=10;">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- Optional voice-cloning branch -->
+        <mxCell id="35" edge="1" parent="1" source="22" target="28" value="ref .wav (optional)" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#546E7A;strokeWidth=1.5;dashed=1;dashPattern=8 4;exitX=0.5;exitY=1;entryX=0;entryY=0.5;fontSize=10;fontColor=#546E7A;">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="36" edge="1" parent="1" source="28" target="24" value="speaker embedding" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#546E7A;strokeWidth=1.5;dashed=1;dashPattern=8 4;exitX=0.5;exitY=0;entryX=0.5;entryY=1;fontSize=10;fontColor=#546E7A;">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- session.rs "uses" fan-out -->
+        <mxCell id="40" edge="1" parent="1" source="21" target="24" value="uses" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#1565C0;strokeWidth=1;dashed=1;dashPattern=8 4;exitX=0;exitY=0.5;entryX=1;entryY=0.3;fontSize=9;fontColor=#1565C0;">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="41" edge="1" parent="1" source="21" target="25" value="uses" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#1565C0;strokeWidth=1;dashed=1;dashPattern=8 4;exitX=0.5;exitY=1;entryX=0.5;entryY=0;fontSize=9;fontColor=#1565C0;">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="42" edge="1" parent="1" source="21" target="26" value="uses" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#1565C0;strokeWidth=1;dashed=1;dashPattern=8 4;exitX=1;exitY=0.5;entryX=0;entryY=0.3;fontSize=9;fontColor=#1565C0;">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="43" edge="1" parent="1" source="21" target="28" value="uses" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#1565C0;strokeWidth=1;dashed=1;dashPattern=8 4;exitX=0;exitY=1;entryX=0;entryY=0.5;fontSize=9;fontColor=#1565C0;">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="500" y="465" />
+              <mxPoint x="500" y="675" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+
+        <!-- ============ Legend ============ -->
+        <mxCell id="50" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FAFAFA;strokeColor=#BDBDBD;shadow=1;" value="">
+          <mxGeometry x="1450" y="810" width="330" height="250" as="geometry" />
+        </mxCell>
+        <mxCell id="51" parent="1" vertex="1" style="text;html=1;fontSize=13;fontStyle=1;align=left;fillColor=none;strokeColor=none;fontColor=#424242;" value="Legend">
+          <mxGeometry x="1465" y="816" width="100" height="22" as="geometry" />
+        </mxCell>
+
+        <mxCell id="52" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#455A64;strokeColor=#263238;" value="">
+          <mxGeometry x="1465" y="844" width="36" height="16" as="geometry" />
+        </mxCell>
+        <mxCell id="53" parent="1" vertex="1" style="text;html=1;fontSize=11;align=left;fillColor=none;strokeColor=none;fontColor=#616161;" value="External input (text, .wav, pretrained weights)">
+          <mxGeometry x="1510" y="840" width="260" height="22" as="geometry" />
+        </mxCell>
+
+        <mxCell id="54" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E53935;strokeColor=#B71C1C;" value="">
+          <mxGeometry x="1465" y="868" width="36" height="16" as="geometry" />
+        </mxCell>
+        <mxCell id="55" parent="1" vertex="1" style="text;html=1;fontSize=11;align=left;fillColor=none;strokeColor=none;fontColor=#616161;" value="Major stage (export scripts, or a hand-rolled decode/ODE loop)">
+          <mxGeometry x="1510" y="864" width="260" height="22" as="geometry" />
+        </mxCell>
+
+        <mxCell id="56" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E3F2FD;strokeColor=#1565C0;" value="">
+          <mxGeometry x="1465" y="892" width="36" height="16" as="geometry" />
+        </mxCell>
+        <mxCell id="57" parent="1" vertex="1" style="text;html=1;fontSize=11;align=left;fillColor=none;strokeColor=none;fontColor=#616161;" value="Rust module — single ONNX forward pass, no loop">
+          <mxGeometry x="1510" y="888" width="260" height="22" as="geometry" />
+        </mxCell>
+
+        <mxCell id="58" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#00695C;strokeColor=#004D40;" value="">
+          <mxGeometry x="1465" y="916" width="36" height="16" as="geometry" />
+        </mxCell>
+        <mxCell id="59" parent="1" vertex="1" style="text;html=1;fontSize=11;align=left;fillColor=none;strokeColor=none;fontColor=#616161;" value="Verification gate — must pass before shipping">
+          <mxGeometry x="1510" y="912" width="260" height="22" as="geometry" />
+        </mxCell>
+
+        <mxCell id="60" parent="1" vertex="1" style="shape=document;whiteSpace=wrap;html=1;fillColor=#E8F5E9;strokeColor=#43A047;size=0.15;" value="">
+          <mxGeometry x="1465" y="940" width="36" height="16" as="geometry" />
+        </mxCell>
+        <mxCell id="61" parent="1" vertex="1" style="text;html=1;fontSize=11;align=left;fillColor=none;strokeColor=none;fontColor=#616161;" value="Artifact — a file produced">
+          <mxGeometry x="1510" y="936" width="260" height="22" as="geometry" />
+        </mxCell>
+
+        <mxCell id="62" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFF8E1;strokeColor=#F9A825;dashed=1;" value="">
+          <mxGeometry x="1465" y="964" width="36" height="16" as="geometry" />
+        </mxCell>
+        <mxCell id="63" parent="1" vertex="1" style="text;html=1;fontSize=11;align=left;fillColor=none;strokeColor=none;fontColor=#616161;" value="Cross-cutting: used by every ONNX forward pass">
+          <mxGeometry x="1510" y="960" width="260" height="22" as="geometry" />
+        </mxCell>
+
+        <mxCell id="64" edge="1" parent="1" style="endArrow=classic;html=1;strokeColor=#1565C0;strokeWidth=1;dashed=1;dashPattern=8 4;" value="">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="1465" y="994" as="sourcePoint" />
+            <mxPoint x="1501" y="994" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="65" parent="1" vertex="1" style="text;html=1;fontSize=11;align=left;fillColor=none;strokeColor=none;fontColor=#616161;" value="&quot;uses&quot; (session.rs EP selection)">
+          <mxGeometry x="1510" y="984" width="260" height="22" as="geometry" />
+        </mxCell>
+
+        <mxCell id="66" edge="1" parent="1" style="endArrow=classic;html=1;strokeColor=#546E7A;strokeWidth=1.5;dashed=1;dashPattern=8 4;" value="">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="1465" y="1018" as="sourcePoint" />
+            <mxPoint x="1501" y="1018" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="67" parent="1" vertex="1" style="text;html=1;fontSize=11;align=left;fillColor=none;strokeColor=none;fontColor=#616161;" value="Optional path (--voice zero-shot cloning)">
+          <mxGeometry x="1510" y="1008" width="260" height="22" as="geometry" />
+        </mxCell>
+
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

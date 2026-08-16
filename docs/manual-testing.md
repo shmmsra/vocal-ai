@@ -65,4 +65,44 @@ make check
 
 ---
 
+## Execution-provider selection (Milestone 1)
+
+**Test command(s)**:
+```bash
+cargo test -p vocalai-core session:: 
+cargo test -p vocalai-core --features coreml session::
+```
+
+**Setup**: Rust toolchain installed. Second command only meaningful on macOS (CoreML feature).
+
+**What to observe**: Test names and pass/fail output from `crates/vocalai-core/src/session.rs`'s `session::tests` module.
+
+**Pass criteria**:
+- Default build (no features): `execution_providers()` returns exactly one entry, and it downcasts to `CPU`.
+- `--features coreml` build: `execution_providers()` returns `[CoreML, CPU]` in that order — CoreML first, CPU last.
+- All tests pass, no clippy warnings under either feature combination (`cargo clippy --workspace --all-targets -- -D warnings`, then again with `--features vocalai-core/coreml`).
+
+**Fail indicators**:
+- CPU appears anywhere but last in the list.
+- A hardware EP is missing when its feature is enabled, or present when it isn't.
+
+---
+
+## Export toolchain requirements (Milestone 1)
+
+**Test command(s)**:
+```bash
+cd export && pytest
+```
+
+**Setup**: Python 3 installed. Does **not** require the packages in `requirements.txt` to actually be installed — the test only parses the file.
+
+**What to observe**: `export/tests/test_requirements.py` pass/fail output.
+
+**Pass criteria**: Test confirms `chatterbox-tts`, `onnx`, and `onnxruntime` are each pinned to an exact version in `export/requirements.txt`.
+
+**Fail indicators**: Any of the three packages missing or unpinned (no `==version`).
+
+---
+
 *Add new sections below this line as features land. Group by feature area (e.g. CLI, export pipeline, EP selection, voice cloning).*

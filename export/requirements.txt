@@ -1,1 +1,4 @@
+chatterbox-tts==0.1.7
+onnx==1.22.0
+onnxruntime==1.28.0
 pytest
