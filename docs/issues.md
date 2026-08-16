@@ -58,6 +58,90 @@ Tickets use the prefix `VAI-NNN`, numbered sequentially (e.g. `VAI-001`, `VAI-00
 
 ---
 
+### VAI-002 · P2 · OPEN · Milestone 2
+**Export easy static graphs (HiFiGAN, voice encoder, S3 tokenizer) + stand up parity harness**
+
+**Acceptance criteria**:
+- [ ] `export/export_hifigan.py`, `export/export_ve.py`, `export/export_s3tokenizer.py` produce ONNX graphs
+- [ ] `remove_weight_norm()` applied before tracing HiFiGAN
+- [ ] `export/parity_check.py` implemented and passing for all three components (ONNX vs PyTorch reference, fixed input, within tolerance)
+- [ ] Docs updated (CHANGELOG, STATUS, manual-testing)
+
+**Notes**: Depends on `VAI-001`. See `docs/phase1-onnx-rust-cli-plan.md` §7, Milestone 2. Proves the export + parity toolchain end-to-end on low-risk pieces before T3.
+
+---
+
+### VAI-003 · P2 · OPEN · Milestone 3
+**Export S3Gen flow estimator; implement Euler ODE loop; chain into HiFiGAN**
+
+**Acceptance criteria**:
+- [ ] `export/export_s3gen.py` exports the flow estimator as a static per-step forward
+- [ ] `crates/vocalai-core/src/s3gen.rs` implements the fixed-count Euler ODE loop (`x = x + dt*dxdt`) driving the estimator
+- [ ] S3Gen output chained into HiFiGAN vocoder
+- [ ] Parity check passes mel→waveform against PyTorch reference
+- [ ] Docs updated (CHANGELOG, STATUS, manual-testing)
+
+**Notes**: Depends on `VAI-002`. See `docs/phase1-onnx-rust-cli-plan.md` §7, Milestone 3.
+
+---
+
+### VAI-004 · P2 · OPEN · Milestone 4
+**Export T3 as decoder-with-past; implement KV-cache decode loop + sampling**
+
+**Acceptance criteria**:
+- [ ] `export/export_t3.py` exports T3 with explicit `past_key_values.*` in / `present.*` out
+- [ ] `crates/vocalai-core/src/t3.rs` implements the KV-cache decode loop: repetition penalty, top-p, min-p, temperature, CFG duplication
+- [ ] Parity check passes on token sequences against the reference on a fixed seed
+- [ ] Docs updated (CHANGELOG, STATUS, manual-testing)
+
+**Notes**: Depends on `VAI-003`. Main technical risk of Phase 1 (KV-cache naming/layout, dynamic sequence-length axes) — see `docs/phase1-onnx-rust-cli-plan.md` §7 Milestone 4 and §9 Open Items.
+
+---
+
+### VAI-005 · P2 · OPEN · Milestone 5
+**Export PerthNet; wire watermarking into output**
+
+**Acceptance criteria**:
+- [ ] PerthNet exported from external `resemble-perth` package
+- [ ] License confirmed to permit redistribution of exported weights
+- [ ] `crates/vocalai-core/src/watermark.rs` wires watermarking into the output pipeline
+- [ ] Parity check passes for PerthNet
+- [ ] Docs updated (CHANGELOG, STATUS, manual-testing)
+
+**Notes**: Depends on `VAI-004`. See `docs/phase1-onnx-rust-cli-plan.md` §7 Milestone 5 and §9 Open Items (external package, licensing).
+
+---
+
+### VAI-006 · P2 · OPEN · Milestone 6
+**Wire full pipeline in vocalai-core + clap CLI in vocalai-cli**
+
+**Acceptance criteria**:
+- [ ] Full pipeline wired in `vocalai-core` (tokenizer → T3 → S3Gen → HiFiGAN → watermark → WAV)
+- [ ] `vocalai-cli` clap CLI implements flags per plan §3 (`--text`, `--voice`, `--exaggeration`, `--cfg-weight`, `--temperature`, `--repetition-penalty`, `--min-p`, `--top-p`, `--max-new-tokens`, `--out`)
+- [ ] `--voice` zero-shot cloning: 16 kHz resample + mel + speaker embedding preprocessing
+- [ ] Built-in default voice used when `--voice` is omitted
+- [ ] `vocalai --text "hello world" --out out.wav` produces audible, correct 24 kHz speech
+- [ ] Docs updated (CHANGELOG, STATUS, manual-testing)
+
+**Notes**: Depends on `VAI-005`. See `docs/phase1-onnx-rust-cli-plan.md` §7 Milestone 6 and §8 Verification/Exit Criteria (end-to-end, voice cloning).
+
+---
+
+### VAI-007 · P2 · OPEN · Milestone 7
+**Per-platform packaging: artifact matrix, bundling, smoke tests**
+
+**Acceptance criteria**:
+- [ ] Build artifact matrix per §2.3: `vocalai-macos` (CoreML→CPU), `vocalai-windows-cuda`, `vocalai-linux-cuda`, `vocalai-{win,linux}-cpu`
+- [ ] GPU artifacts bundle required CUDA/cuDNN libs; macOS/CPU artifacts stay lean
+- [ ] Model weights bundled into each release artifact
+- [ ] Each artifact smoke-tested; CPU-fallback EP forcing produces equivalent output
+- [ ] Memory/swap measured against the PyTorch/MPS baseline (§8) on the same hardware
+- [ ] Docs updated (CHANGELOG, STATUS, manual-testing)
+
+**Notes**: Depends on `VAI-006`. See `docs/phase1-onnx-rust-cli-plan.md` §7 Milestone 7 and §8 Verification/Exit Criteria (full list).
+
+---
+
 *Add new tickets below this line. Use the same format: heading with ID · priority · status · brief category; then bold one-line title; then acceptance criteria as checkboxes; then notes.*
 
 ---
