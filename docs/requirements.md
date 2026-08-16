@@ -23,7 +23,7 @@
 
 - [x] Milestone 1: Scaffold the real Cargo workspace (`vocalai-cli`, `vocalai-core`); pin `ort` with `coreml`/`cuda` features; set up `export/requirements.txt` with a working chatterbox + onnx env
 - [x] Milestone 2: Export HiFiGAN → voice encoder → S3 tokenizer; stand up `export/parity_check.py`
-- [ ] Milestone 3: Export S3Gen flow estimator; implement the Euler ODE loop; chain into HiFiGAN
+- [x] Milestone 3: Export S3Gen flow estimator; implement the Euler ODE loop; chain into HiFiGAN
 - [ ] Milestone 4: Export T3 as decoder-with-past; implement the KV-cache decode loop + sampling
 - [ ] Milestone 5: Export PerthNet; wire watermarking into output
 - [ ] Milestone 6: Wire the full pipeline + `clap` CLI; support `--voice` zero-shot cloning

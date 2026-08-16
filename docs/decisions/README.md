@@ -62,6 +62,7 @@ What becomes easier? What becomes harder? What new commitments does this create?
 | [0001](0001-adopt-ai-sdlc.md) | Adopt the ai-sdlc-bootstrap workflow | Accepted |
 | [0002](0002-onnx-plus-rust-runtime.md) | Export to ONNX and re-drive the loops from native Rust | Accepted |
 | [0003](0003-rust-over-cpp.md) | Rust for the native runtime (evaluated against C++) | Accepted |
+| [0004](0004-s3gen-euler-loop-generic-over-estimator-call.md) | S3Gen's Euler ODE loop is generic over the estimator call, not `ort`-coupled | Accepted |
 
 *Add new rows as ADRs accumulate.*
 

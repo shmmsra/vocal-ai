@@ -6,6 +6,46 @@
 
 ---
 
+## 2026-08-16 — VAI-003: Export S3Gen flow estimator + Euler ODE loop, chain into HiFiGAN
+
+**What changed**: Added `export/export_s3gen.py`, which exports the S3Gen flow-matching estimator
+(`ConditionalDecoder`, accessed via `s3gen.flow.decoder.estimator`) as a static per-step ONNX graph
+— the same per-step call `ConditionalCFM.solve_euler` makes inside its Python loop
+(`x, mask, mu, t, spks, cond` in; `dxdt` out, batch pre-doubled for CFG). Added
+`crates/vocalai-core/src/s3gen.rs`: `cosine_t_span()` (the `t_scheduler='cosine'` schedule),
+`solve_euler()` (the CFG-doubled fixed-step Euler loop, generic over the per-step estimator call —
+see ADR-0004 for why), `run_estimator()`/`mel_to_waveform()` (real `ort::Session`-backed adapters
+for the estimator and the Milestone-2 HiFiGAN session), and `generate_waveform()` (chains both).
+5 new Rust unit tests cover the cosine schedule and the Euler/CFG math against a synthetic linear
+estimator (`dxdt = mu - x`) with hand-computed expected outputs — no ONNX Runtime session or model
+file needed. Added `export/parity_check.py::check_s3gen`, which replicates the identical
+CFG-doubled loop in Python (`_solve_euler_onnx`) driving the exported `s3gen_estimator.onnx` +
+`hifigan.onnx`, and compares both the intermediate mel and the final waveform against the real
+PyTorch `ConditionalCFM.solve_euler` + HiFiGAN wrapper (mel max_abs_diff ~4e-5, waveform ~1e-5;
+well within atol=1e-4/rtol=1e-3). Added `ndarray = "0.17"` + `ort`'s `ndarray` feature to
+`vocalai-core`'s `Cargo.toml` (version pinned to match `ort` 2.0.0-rc.13's own `ndarray`
+dependency, so the two share one type in the dependency graph).
+
+**Why**: Milestone 3 is the first Rust code to actually drive an ONNX Runtime session (Milestones
+1-2 only built the EP-selection list). Model weights/`.onnx` files are git-ignored build artifacts
+(`CLAUDE.md` §1) and don't exist in a fresh clone, so the Euler loop's real correctness risk — the
+CFG batch-doubling and combination formula, the Euler update — needed to be testable without a
+real model file or network access; making `solve_euler` generic over the estimator call achieves
+that (ADR-0004) while the numerically-fragile ONNX-vs-PyTorch check stays in `parity_check.py`
+alongside every other component's parity check, following the same pattern Milestone 2 established.
+
+**What was rejected**: Writing `solve_euler` directly against `&mut ort::Session` with no Rust-side
+math tests (would violate TDD, `CONVENTIONS.md` §1, and leave the CFG/Euler math uncovered in
+Rust). Bundling a fixture `.onnx` for Rust tests (violates the no-binary-artifacts constraint and
+wouldn't test anything the synthetic-closure test doesn't already cover). See ADR-0004 for the
+full rationale.
+
+**What's next**: Milestone 4 — export T3 as decoder-with-past, implement the KV-cache decode loop
++ sampling in `vocalai-core/src/t3.rs` (`docs/issues.md` `VAI-004`) — the main technical risk of
+Phase 1 (plan §9 Open Items).
+
+---
+
 ## 2026-08-16 — VAI-002: Export HiFiGAN/voice-encoder/S3-tokenizer to ONNX + `parity_check.py`
 
 **What changed**: Set up the export venv (`export/.venv`, Python 3.12 — chatterbox-tts==0.1.7

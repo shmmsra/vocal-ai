@@ -44,20 +44,6 @@ Tickets use the prefix `VAI-NNN`, numbered sequentially (e.g. `VAI-001`, `VAI-00
 
 ## Open Issues
 
-### VAI-003 · P2 · OPEN · Milestone 3
-**Export S3Gen flow estimator; implement Euler ODE loop; chain into HiFiGAN**
-
-**Acceptance criteria**:
-- [ ] `export/export_s3gen.py` exports the flow estimator as a static per-step forward
-- [ ] `crates/vocalai-core/src/s3gen.rs` implements the fixed-count Euler ODE loop (`x = x + dt*dxdt`) driving the estimator
-- [ ] S3Gen output chained into HiFiGAN vocoder
-- [ ] Parity check passes mel→waveform against PyTorch reference
-- [ ] Docs updated (CHANGELOG, STATUS, manual-testing)
-
-**Notes**: Depends on `VAI-002`. See `docs/phase1-onnx-rust-cli-plan.md` §7, Milestone 3.
-
----
-
 ### VAI-004 · P2 · OPEN · Milestone 4
 **Export T3 as decoder-with-past; implement KV-cache decode loop + sampling**
 
@@ -123,6 +109,7 @@ Tickets use the prefix `VAI-NNN`, numbered sequentially (e.g. `VAI-001`, `VAI-00
 
 | Date | Ticket | Title | Commit |
 |------|--------|-------|--------|
+| 2026-08-16 | VAI-003 | Export S3Gen flow estimator + Euler ODE loop, chain into HiFiGAN | *(pending — see next commit)* |
 | 2026-08-16 | VAI-002 | Export HiFiGAN/voice-encoder/S3-tokenizer to ONNX + `parity_check.py` | `820ff9a` |
 | 2026-08-16 | VAI-001 | Scaffold the real Cargo workspace + export toolchain | `5b4815c` |
 | 2026-08-16 | — | ai-sdlc-bootstrap scaffold | `ba0f453` |

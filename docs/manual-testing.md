@@ -150,4 +150,48 @@ python parity_check.py
 
 ---
 
+## ONNX export + parity check: S3Gen flow estimator → HiFiGAN (Milestone 3)
+
+**Test command(s)**:
+```bash
+cd export
+source .venv/bin/activate  # if not already active — see docs/dev-setup.md §2
+
+python export_s3gen.py
+python parity_check.py --component s3gen
+```
+
+**Setup**: Same venv/checkpoint as the Milestone 2 export (`ve.safetensors`/`s3gen.safetensors`
+from `ResembleAI/chatterbox`). Requires `models/hifigan.onnx` to already exist (run
+`python export_hifigan.py` first if starting from a clean `models/` — `parity_check.py` will
+also export it on demand if missing).
+
+**What to observe**:
+- `export_s3gen.py` prints `Exported S3Gen flow estimator to models/s3gen_estimator.onnx` with no
+  traceback.
+- `parity_check.py --component s3gen` prints one `[PASS]`/`[FAIL]` line with `max_abs_diff`.
+
+**Pass criteria**:
+- `export_s3gen.py` exits 0 and produces `models/s3gen_estimator.onnx`.
+- `parity_check.py --component s3gen` exits 0 and prints `[PASS] s3gen: max_abs_diff=...`
+  — expect an order of `~1e-4` or smaller (this check reports the worse of the intermediate-mel
+  and final-waveform max_abs_diff, chaining through `models/hifigan.onnx`).
+- `python -m pytest` in `export/` (or `make check` from the repo root) passes
+  `export/tests/test_parity_check.py::test_s3gen_export_matches_pytorch_reference_mel_to_waveform`.
+- `cargo test -p vocalai-core s3gen::` passes all 5 tests (`cosine_t_span_*`, `solve_euler_*`) —
+  these are pure `ndarray` math tests against a synthetic linear estimator, so they run offline
+  with no `models/` directory required.
+
+**Fail indicators**:
+- Any `[FAIL]` line, or `max_abs_diff` far above `1e-4`/`1e-3` (atol/rtol) — check whether
+  `export_s3gen.py`'s example shapes still match `export_hifigan.py`'s fixed `EXAMPLE_FRAMES=50`
+  (the HiFiGAN export has no dynamic frame axis; see its module docstring), or whether
+  `parity_check.py::_solve_euler_onnx` still matches `crates/vocalai-core/src/s3gen.rs::solve_euler`
+  and `ConditionalCFM.solve_euler`'s CFG-doubling/combination math exactly (see ADR-0004).
+- A Rust `s3gen::` test failure with no `models/` directory present indicates an actual math bug
+  in `solve_euler`/`cosine_t_span`, not a missing-fixture issue — these tests never touch ONNX
+  Runtime.
+
+---
+
 *Add new sections below this line as features land. Group by feature area (e.g. CLI, export pipeline, EP selection, voice cloning).*

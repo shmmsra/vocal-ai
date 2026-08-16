@@ -1,5 +1,5 @@
-"""Tests for export/_common.py's comparison helper and the three Milestone-2 ONNX
-exports (HiFiGAN, voice encoder, S3 tokenizer) against their PyTorch references.
+"""Tests for export/_common.py's comparison helper and the ONNX exports (HiFiGAN,
+voice encoder, S3 tokenizer, S3Gen flow estimator) against their PyTorch references.
 
 The parity tests require the export toolchain (torch, chatterbox-tts, onnx,
 onnxruntime — see export/requirements.txt) and download the Chatterbox checkpoint
@@ -51,4 +51,9 @@ def test_voice_encoder_export_matches_pytorch_reference():
 
 def test_s3tokenizer_export_matches_pytorch_reference():
     result = parity_check.check_s3tokenizer(ATOL, RTOL)
+    assert result.passed, f"max_abs_diff={result.max_abs_diff}"
+
+
+def test_s3gen_export_matches_pytorch_reference_mel_to_waveform():
+    result = parity_check.check_s3gen(ATOL, RTOL)
     assert result.passed, f"max_abs_diff={result.max_abs_diff}"
