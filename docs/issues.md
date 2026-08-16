@@ -44,19 +44,6 @@ Tickets use the prefix `VAI-NNN`, numbered sequentially (e.g. `VAI-001`, `VAI-00
 
 ## Open Issues
 
-### VAI-002 · P2 · OPEN · Milestone 2
-**Export easy static graphs (HiFiGAN, voice encoder, S3 tokenizer) + stand up parity harness**
-
-**Acceptance criteria**:
-- [ ] `export/export_hifigan.py`, `export/export_ve.py`, `export/export_s3tokenizer.py` produce ONNX graphs
-- [ ] `remove_weight_norm()` applied before tracing HiFiGAN
-- [ ] `export/parity_check.py` implemented and passing for all three components (ONNX vs PyTorch reference, fixed input, within tolerance)
-- [ ] Docs updated (CHANGELOG, STATUS, manual-testing)
-
-**Notes**: Depends on `VAI-001`. See `docs/phase1-onnx-rust-cli-plan.md` §7, Milestone 2. Proves the export + parity toolchain end-to-end on low-risk pieces before T3.
-
----
-
 ### VAI-003 · P2 · OPEN · Milestone 3
 **Export S3Gen flow estimator; implement Euler ODE loop; chain into HiFiGAN**
 
@@ -136,6 +123,7 @@ Tickets use the prefix `VAI-NNN`, numbered sequentially (e.g. `VAI-001`, `VAI-00
 
 | Date | Ticket | Title | Commit |
 |------|--------|-------|--------|
+| 2026-08-16 | VAI-002 | Export HiFiGAN/voice-encoder/S3-tokenizer to ONNX + `parity_check.py` | *(pending — see next commit)* |
 | 2026-08-16 | VAI-001 | Scaffold the real Cargo workspace + export toolchain | `5b4815c` |
 | 2026-08-16 | — | ai-sdlc-bootstrap scaffold | `ba0f453` |
 

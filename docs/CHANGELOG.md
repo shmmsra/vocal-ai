@@ -6,6 +6,83 @@
 
 ---
 
+## 2026-08-16 — VAI-002: Export HiFiGAN/voice-encoder/S3-tokenizer to ONNX + `parity_check.py`
+
+**What changed**: Set up the export venv (`export/.venv`, Python 3.12 — chatterbox-tts==0.1.7
+requires >=3.10) and installed the real toolchain. Added `export/_common.py` (shared model
+loading, ONNX export helper, comparison helper), `export/export_hifigan.py`,
+`export/export_ve.py`, `export/export_s3tokenizer.py`, and `export/parity_check.py`, plus
+`export/tests/test_parity_check.py` (7 tests total, all real — no mocks). All three components
+export and pass parity against the PyTorch reference on a fixed input (HiFiGAN
+max_abs_diff=5.9e-5, voice encoder 2.1e-7, S3 tokenizer exact-match on discrete tokens; default
+tolerance atol=1e-4/rtol=1e-3).
+
+Model loading bypasses `ChatterboxTTS.from_pretrained()` — it unconditionally constructs a
+`PerthImplicitWatermarker`, which errors in this chatterbox-tts/resemble-perth combo (perth's
+`PerthNet` import silently no-ops on a missing `pkg_resources`/`setuptools`, but
+`ChatterboxTTS.__init__` calls it unguarded). Milestone 2 doesn't need T3 or PerthNet anyway, so
+`_common.py` downloads and loads only `ve.safetensors`/`s3gen.safetensors` directly.
+
+HiFiGAN's vocoder (`HiFTGenerator.decode()`) calls `torch.stft`/`torch.istft` internally; neither
+exports cleanly in this torch version: `return_complex=True` has no ONNX symbolic at all, and
+`torch.istft` has none full stop. `export_hifigan.py`'s wrapper reimplements both directions as
+ONNX-exportable primitives — manual reflect-pad + `torch.stft(..., return_complex=False)` for
+the forward direction (native ONNX `STFT` op), and a precomputed inverse-DFT matrix +
+`conv_transpose1d`-as-overlap-add (an identity kernel scatters each windowed frame back to its
+hop offset, summing overlaps — the standard iSTFTNet trick) for the inverse, with COLA
+window-envelope normalization matching `torch.istft`'s default. It also reimplements
+`SourceModuleHnNSF`/`SineGen`'s noise injection using `numpy.random.RandomState`-seeded
+constants instead of live `torch.manual_seed` + `Uniform.sample`/`randn_like` — empirically,
+the latter does NOT reproduce identically between an eager call and the same call replayed
+through `torch.jit.trace` (confirmed with a minimal repro), which was the actual source of an
+initial ~1.4e-2 parity failure; numpy's RNG isn't touched by JIT tracing's tensor-op
+interception, so it reproduces bit-for-bit in both. `HiFTGenerator.remove_weight_norm()` also
+had to be bypassed — chatterbox-tts applies the new parametrize-based `weight_norm` API but
+calls the old function-based removal API on it, which raises; `_fuse_weight_norm()` walks the
+module tree and removes via the matching (`torch.nn.utils.parametrize`) API instead.
+
+S3 tokenizer's `AudioEncoderV2` precomputes rotary-embedding angles as a complex buffer
+(`torch.polar`) and calls `torch.view_as_real` on it every forward — ONNX has no complex dtype,
+so tracing fails the moment that buffer is embedded as a graph constant. Fixed by precomputing
+the real-valued equivalent (`_real_freqs_cis`, identical math, no complex intermediate) and
+patching `torch.view_as_real` to pass through already-real input (falls back to the real
+implementation for genuinely complex tensors elsewhere, so this is behavior-preserving outside
+this one path).
+
+Added `Makefile`'s `test-py` target preferring `export/.venv/bin/python -m pytest` when that
+venv exists (falls back to plain `pytest` otherwise, e.g. in CI, which installs
+`export/requirements.txt` into the runner's system Python directly) — otherwise `make check`
+would silently use system Python (3.9 here, too old for chatterbox-tts) instead of the export
+venv. Documented per-platform (macOS/Linux/Windows) venv setup in `docs/dev-setup.md` — no
+wrapper script, per explicit instruction, to keep it trivially auditable/cross-platform without
+a bash/PowerShell fork.
+
+**Why**: Milestone 2 proves the export + parity toolchain end-to-end on the three easy/static
+components before Milestone 3's Euler ODE loop and Milestone 4's KV-cache decode loop, where a
+broken toolchain would be a much more expensive place to discover issues (plan §7 sequencing
+rationale). The `ChatterboxTTS.from_pretrained()` bypass and the STFT/ISTFT/RNG/weight-norm
+workarounds were all necessary correctness fixes, not stylistic choices — each was verified by
+making the failure reproduce, understanding the root cause, and confirming the fix against the
+PyTorch reference via `parity_check.py`, not just silencing the export-time error.
+
+**What was rejected**: Making the exported HiFiGAN graph handle arbitrary/dynamic input length —
+`F.fold`'s ONNX symbolic (`aten::col2im`) errors on the traced dynamic `output_size` value
+(worked around via `conv_transpose1d` instead, which incidentally may also be more dynamic-shape
+friendly, but that's untested); the acceptance criteria only require a fixed-input parity check,
+so proving full dynamic-length support is deferred to Milestone 6 when real variable-length CLI
+audio is wired up. The dynamo-based (`torch.onnx.export(..., dynamo=True)`) exporter was tried
+and rejected — it fails on a `torch.no_grad()`/random-sampling interaction inside `SineGen`
+unrelated to any of the above ("cannot mutate tensors with frozen storage"), and the legacy
+exporter path was already far enough along to be worth finishing instead of switching horses.
+Also rejected: a bash-only setup script for the export venv (not cross-platform) and later a
+Python setup-script wrapper too, in favor of plain documented per-platform commands in
+`docs/dev-setup.md` (explicit user preference).
+
+**What's next**: Milestone 3 — export the S3Gen flow estimator, implement the Euler ODE loop in
+`vocalai-core/src/s3gen.rs`, chain into HiFiGAN (`docs/issues.md` `VAI-003`).
+
+---
+
 ## 2026-08-16 — Architecture overview doc + diagram
 
 **What changed**: Added `docs/architecture.md` (plain-language companion to `docs/phase1-onnx-rust-cli-plan.md`, written for a reader new to ML systems) and `docs/architecture-diagram.drawio.xml` (visualizes the dev-time Python export pipeline vs. the runtime Rust inference pipeline, including the optional voice-cloning branch and `session.rs`'s cross-cutting EP-selection role).

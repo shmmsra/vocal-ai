@@ -105,4 +105,49 @@ cd export && pytest
 
 ---
 
+---
+
+## ONNX export + parity check: HiFiGAN, voice encoder, S3 tokenizer (Milestone 2)
+
+**Test command(s)**:
+```bash
+cd export
+python3 -m venv .venv   # if not already created — see docs/dev-setup.md §2
+source .venv/bin/activate  # Windows: .venv\Scripts\activate
+pip install -r requirements.txt
+
+python export_hifigan.py
+python export_ve.py
+python export_s3tokenizer.py
+python parity_check.py
+```
+
+**Setup**: Python 3.10+ (chatterbox-tts requires it). First run downloads
+`ve.safetensors`/`s3gen.safetensors` (~1-2 GB) from the HuggingFace Hub (`ResembleAI/chatterbox`)
+— needs network access. `models/` is git-ignored; exported `.onnx` files land there.
+
+**What to observe**:
+- Each `export_*.py` prints `Exported <component> to models/<name>.onnx` with no traceback.
+- `parity_check.py` prints one `[PASS]`/`[FAIL]` line per component with `max_abs_diff`.
+
+**Pass criteria**:
+- All three `export_*.py` scripts exit 0 and produce a `.onnx` file under `models/`.
+- `parity_check.py` exits 0 and prints `[PASS]` for `hifigan`, `ve`, and `s3tokenizer` — expect
+  `max_abs_diff` around `~5e-5`, `~2e-7`, and `0.0` (exact match — discrete tokens) respectively.
+- `python -m pytest` in `export/` (or `make check` from the repo root) passes
+  `export/tests/test_parity_check.py`'s 6 tests + `test_requirements.py`'s 1.
+
+**Fail indicators**:
+- Any `[FAIL]` line, or `max_abs_diff` far above `1e-4`/`1e-3` (atol/rtol) — check whether
+  `export_hifigan.py`'s deterministic-noise reimplementation (`_sine_gen_deterministic`) or the
+  `_stft_onnx`/`_istft_onnx` primitives were touched; both are numerically fragile (see
+  `docs/CHANGELOG.md`'s VAI-002 entry for what makes each one work).
+- Import errors for `torch`/`chatterbox`/`onnx`/`onnxruntime` — the venv isn't activated or
+  `requirements.txt` wasn't (re-)installed after a change.
+- `PerthImplicitWatermarker`/`pkg_resources` errors — means something started calling
+  `ChatterboxTTS.from_pretrained()` again instead of `_common.py`'s narrower
+  `load_voice_encoder()`/`load_s3gen()` loaders (Milestone 2 doesn't need T3 or PerthNet).
+
+---
+
 *Add new sections below this line as features land. Group by feature area (e.g. CLI, export pipeline, EP selection, voice cloning).*

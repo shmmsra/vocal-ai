@@ -23,12 +23,37 @@
 git clone <repo-url>
 cd vocal-ai
 
-# Rust workspace (once scaffolded — see docs/issues.md VAI-001):
+# Rust workspace:
 cargo fetch
-
-# Python export/ tooling (dev-time only, not shipped):
-cd export && pip install -r requirements.txt && cd ..
 ```
+
+### Python export/ tooling (dev-time only, not shipped)
+
+`chatterbox-tts` requires **Python 3.10+**. Use an isolated venv scoped to `export/` so
+this doesn't collide with any other Python on your machine — installing it pulls in
+torch/torchaudio/transformers (~2 GB) and, on first run of the `export_*.py` scripts,
+downloads the Chatterbox checkpoint from the HuggingFace Hub (~1-2 GB more).
+
+**macOS / Linux**:
+```bash
+cd export
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+```
+
+**Windows (PowerShell or cmd)**:
+```bat
+cd export
+python -m venv .venv
+.venv\Scripts\activate
+pip install -r requirements.txt
+```
+
+Re-activate the venv (`source export/.venv/bin/activate` / `export\.venv\Scripts\activate`)
+in any new shell before running `export_*.py`, `parity_check.py`, or `pytest` in `export/`
+directly. `make check` finds this venv automatically (see §6) — no activation needed just
+to commit.
 
 ---
 
@@ -39,7 +64,7 @@ cd export && pip install -r requirements.txt && cd ..
 | `git` | Version control | Pre-installed on macOS/Linux |
 | `make` | Build entry point | `brew install make` / `apt install make` |
 | `cargo` / `rustup` | Rust toolchain + package manager | https://rustup.rs |
-| `python3` / `pip` | Runs `export/` ONNX export + parity-check scripts | pyenv or system Python |
+| `python3` / `pip` (3.10+) | Runs `export/` ONNX export + parity-check scripts, in `export/.venv` (§2) | pyenv or system Python |
 
 *Add rows for platform-specific accelerator tooling (e.g. CUDA toolkit for local GPU testing) as Milestone 1+ work lands.*
 
@@ -79,7 +104,13 @@ You only need to run `make setup-hooks` once per clone. Re-run it if you delete 
 make check
 ```
 
-Expected outcome on a fresh clone: `make check` passes cleanly. The throwaway placeholder tests in `crates/vocalai-core` and `export/tests/test_scaffold.py` are `#[ignore]`d / `@pytest.mark.skip`ped TDD seeds (see `docs/issues.md` VAI-001) — they don't run by default, but remove the ignore/skip marker and replace them with real tests when Milestone 1 starts. If `make check` fails for any other reason on a clean clone, fix `docs/dev-setup.md` first — the install instructions above are wrong.
+Expected outcome on a fresh clone: `make check` passes cleanly (real tests only — no
+placeholder/ignored tests remain as of Milestone 2). `make check`'s `test-py` step runs
+`export/.venv/bin/python -m pytest` automatically if that venv exists (§2), otherwise falls
+back to plain `pytest` — so committing doesn't require activating the venv yourself, but the
+venv **does** need to exist and have `requirements.txt` installed (§2) for the export/parity
+tests to pass rather than error on missing imports. If `make check` fails for any other reason
+on a clean clone, fix `docs/dev-setup.md` first — the install instructions above are wrong.
 
 ---
 

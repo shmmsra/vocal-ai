@@ -36,7 +36,7 @@ test-rs:
 	cargo test --workspace
 
 test-py:
-	cd export && pytest
+	cd export && if [ -x .venv/bin/python ]; then .venv/bin/python -m pytest; else pytest; fi
 
 test: test-rs test-py
 
