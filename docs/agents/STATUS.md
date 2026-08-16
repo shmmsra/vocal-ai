@@ -41,7 +41,7 @@ The next logical work, in priority order. Update at the end of every session.
 
 | Date | Ticket | Summary | Commit |
 |------|--------|---------|--------|
-| 2026-08-16 | — | ai-sdlc-bootstrap scaffold | pending |
+| 2026-08-16 | — | ai-sdlc-bootstrap scaffold | `ba0f453` |
 
 ---
 
