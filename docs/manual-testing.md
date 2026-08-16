@@ -148,6 +148,14 @@ python parity_check.py
   `ChatterboxTTS.from_pretrained()` again instead of `_common.py`'s narrower
   `load_voice_encoder()`/`load_s3gen()` loaders (Milestone 2 doesn't need T3 or PerthNet).
 
+**Important**: `models/` is git-ignored, so a locally-cached `.onnx` file silently skips each
+`check_*()`'s `export()` call (`if not onnx_path.exists(): export_*.export(...)`) — masking any bug
+in the export path itself (a stale-cache-masked bug like this bit CI once; see the "fix: S3
+tokenizer export corrupted `freqs_cis`" CHANGELOG entry). **Before trusting a green
+`parity_check.py`/`pytest` run as proof an export script is correct, clear `models/*.onnx` first**
+to force every component through a real fresh export, not just a parity check against a
+already-exported (possibly stale) file.
+
 ---
 
 ## ONNX export + parity check: S3Gen flow estimator → HiFiGAN (Milestone 3)

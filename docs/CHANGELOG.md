@@ -6,6 +6,42 @@
 
 ---
 
+## 2026-08-16 — fix: S3 tokenizer export corrupted `freqs_cis` on a fresh `models/` dir
+
+**What changed**: `export_s3tokenizer.py::build_wrapper()` mutates `encoder.freqs_cis` in place on
+the `@lru_cache`d shared `s3gen` object returned by `_common.load_s3gen()` (replacing the original
+complex rotary buffer with the real-valued equivalent needed for ONNX export — see the Milestone 2
+CHANGELOG entry below). `check_s3tokenizer()` calls `build_wrapper()` once directly (to get the
+"PyTorch reference" module), then again — unguarded — via `export()` when `models/s3tokenizer.onnx`
+doesn't already exist. The second call read the *already-mutated* buffer's shape (whose last dim is
+now `2`, the real/imaginary pair, not the original head dim) and computed a corrupted replacement
+from it, causing a hard shape-mismatch `RuntimeError` during tracing (`"size of tensor a (64) must
+match the size of tensor b (2)"`). Fixed by guarding the mutation with `torch.is_complex(...)`, so
+a second call on an already-converted buffer is a no-op.
+
+**Why**: This was a **pre-existing bug from VAI-002**, invisible in every local `make check` run
+because the developer's `export/`-adjacent `models/` directory (git-ignored, dev-time only) had a
+stale `s3tokenizer.onnx` cached since the day VAI-002 landed — so `check_s3tokenizer()`'s
+`export()` branch was always skipped locally, and `build_wrapper()` only ever ran once per process.
+CI clones fresh (no `models/` directory at all) and was the first environment to actually exercise
+the `export()` branch, surfacing the bug as CI's very first pre-commit-gate failure (reported by
+the human after pushing VAI-003). Reproduced locally by clearing `models/*.onnx` and reinstalling
+`export/requirements.txt` into a throwaway venv to match a clean-checkout CI run exactly; confirmed
+the fix resolves it in that same reproduction before applying it for real.
+
+**What was rejected**: Ruled out transitive-dependency drift (a common risk with unpinned
+sub-dependencies like `transformers`/`diffusers`/`s3tokenizer` in `chatterbox-tts`'s dependency
+tree) by installing `requirements.txt` fresh and confirming it resolved to the *same* versions
+already in the local dev venv — the bug reproduced regardless, isolating it to the shared-mutation
+logic, not a version mismatch.
+
+**What's next**: No open follow-up — `build_wrapper()` is now idempotent under repeated calls in
+the same process, which is the property every `export_*.py`'s model-loading helper needs (see
+`export_hifigan.py::_fuse_weight_norm`'s pre-existing idempotency comment for the established
+pattern).
+
+---
+
 ## 2026-08-16 — VAI-003: Export S3Gen flow estimator + Euler ODE loop, chain into HiFiGAN
 
 **What changed**: Added `export/export_s3gen.py`, which exports the S3Gen flow-matching estimator

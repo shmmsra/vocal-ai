@@ -70,12 +70,20 @@ class S3TokenizerExportWrapper(nn.Module):
 
 
 def build_wrapper(device: str = "cpu") -> S3TokenizerExportWrapper:
+    """`load_s3gen()` is `@lru_cache`d, so `encoder` below is a *shared* module
+    instance across every call in the process (e.g. `check_s3tokenizer()` calls
+    this once directly, then again via `export()`). Guard the `freqs_cis`
+    replacement with `is_complex` so a second call is a no-op instead of reading
+    the already-real buffer's shape (whose last dim is 2, not the head dim) and
+    computing a corrupted replacement from it.
+    """
     s3gen = load_s3gen(device=device)
     tokenizer = s3gen.tokenizer
     tokenizer.eval()
     encoder = tokenizer.encoder
-    dim, end = encoder.freqs_cis.shape[-1], encoder.freqs_cis.shape[0]
-    encoder.freqs_cis = _real_freqs_cis(dim, end).to(device)
+    if torch.is_complex(encoder.freqs_cis):
+        dim, end = encoder.freqs_cis.shape[-1], encoder.freqs_cis.shape[0]
+        encoder.freqs_cis = _real_freqs_cis(dim, end).to(device)
     return S3TokenizerExportWrapper(tokenizer)
 
 
