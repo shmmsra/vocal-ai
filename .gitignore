@@ -34,3 +34,36 @@ mcp-server.log
 # System Files
 .DS_Store
 Thumbs.db
+
+# ── Added by ai-sdlc-bootstrap ────────────────────────────────────────────────
+
+# Rust
+/target/
+**/*.rs.bk
+
+# Python (export/ dev-time scripts)
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Env / secrets — never commit
+.env
+.env.local
+.env.*.local
+*.pem
+*.key
+secrets/
+
+# Model weights / ONNX exports — never commit (see docs/agents/CONVENTIONS.md §3)
+models/
+*.onnx
+*.safetensors
+*.pt

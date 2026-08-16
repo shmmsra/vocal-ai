@@ -1,0 +1,16 @@
+{
+  "// — vocal-ai recommended extensions —": "When a contributor opens the repo for the first time, VS Code prompts them to install these. Keep this list short — only extensions that all contributors should have.",
+
+  "recommendations": [
+    "editorconfig.editorconfig",
+    "github.vscode-pull-request-github",
+    "streetsidesoftware.code-spell-checker",
+    "rust-lang.rust-analyzer",
+    "vadimcn.vscode-lldb",
+    "ms-python.python",
+    "ms-python.vscode-pylance",
+    "charliermarsh.ruff"
+  ],
+
+  "unwantedRecommendations": []
+}

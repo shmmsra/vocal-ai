@@ -1,0 +1,11 @@
+[package]
+name = "vocalai-cli"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "vocalai"
+path = "src/main.rs"
+
+[dependencies]
+vocalai-core = { path = "../vocalai-core" }

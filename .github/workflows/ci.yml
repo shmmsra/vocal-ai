@@ -1,0 +1,35 @@
+# vocal-ai CI — mirrors `make check` exactly.
+#
+# Whatever the local pre-commit gate runs, CI runs the same thing on Linux.
+# Drift between local and CI erodes the gate's authority — don't let them diverge.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  check:
+    name: Pre-commit gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+
+      - name: Install Python export/ dependencies
+        run: pip install -r export/requirements.txt
+
+      # ── The actual gate ──────────────────────────────────────────────────────
+      - name: Run make check
+        run: make check

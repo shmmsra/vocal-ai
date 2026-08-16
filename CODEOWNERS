@@ -1,0 +1,33 @@
+# vocal-ai — Code Owners
+#
+# This file declares default and per-path ownership. GitHub uses it to auto-request
+# reviews. The agent SDLC uses it to know who to ping when a change touches an
+# area outside the current session's scope.
+#
+# Syntax: <pattern>  <owner> [<owner> ...]
+# Patterns follow .gitignore syntax. Owners can be GitHub usernames (@user) or
+# team slugs (@org/team). Later matches win.
+#
+# Reference: https://docs.github.com/articles/about-code-owners/
+
+# ── Default owner (applies to all files unless overridden below) ─────────────
+# Shivam Mishra
+*    @shmmsra
+
+# ── Per-path overrides ───────────────────────────────────────────────────────
+# Add specific ownership rules as the project grows. Examples:
+#
+# Documentation owned by a docs lead:
+# /docs/         @shmmsra
+#
+# CI / build infra owned by infra team:
+# /.github/      @shmmsra
+# /Makefile      @shmmsra
+#
+# Agent-config layer must be reviewed by anyone touching agent workflows:
+# /CLAUDE.md     @shmmsra
+# /AGENTS.md     @shmmsra
+# /docs/agents/  @shmmsra
+#
+# Architecture decisions need an architect's sign-off:
+# /docs/decisions/  @shmmsra
