@@ -1,0 +1,36 @@
+# See http://help.github.com/ignore-files/ for more about ignoring files.
+
+# compiled output
+/build
+/dist
+/tmp
+
+# dependencies
+/node_modules
+/yarn_cache
+
+# IDEs and editors
+/.idea
+/.vs
+
+*.launch
+*.sublime-workspace
+
+# IDE - VSCode
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+.cursor/rules/
+
+# misc
+/.npmrc
+/.sass-cache
+npm-debug.log
+yarn-error.log
+mcp-server.log
+
+# System Files
+.DS_Store
+Thumbs.db
