@@ -15,7 +15,24 @@ jobs:
   check:
     name: Pre-commit gate
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
+      - name: Free disk space
+        # `ubuntu-latest` ships ~30GB of preinstalled toolchains (.NET, Android SDK,
+        # GHC, CodeQL, ...) we never use. The export/ toolchain (torch, diffusers,
+        # transformers, gradio) plus HuggingFace checkpoints downloaded fresh every
+        # run (ve.safetensors + s3gen.safetensors + t3_cfg.safetensors, the latter
+        # alone ~2GB) plus their exported .onnx artifacts (t3_decoder.onnx alone
+        # ~1.9GB) are enough to exhaust the runner's remaining disk mid-run — this
+        # reclaims headroom before any of that happens (standard GitHub Actions
+        # idiom for disk-constrained jobs).
+        run: |
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /usr/local/lib/android
+          sudo rm -rf /opt/ghc
+          sudo rm -rf /opt/hostedtoolcache/CodeQL
+          df -h /
+
       - uses: actions/checkout@v4
 
       - uses: dtolnay/rust-toolchain@stable
