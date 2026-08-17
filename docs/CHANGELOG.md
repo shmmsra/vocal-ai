@@ -6,6 +6,62 @@
 
 ---
 
+## 2026-08-17 — VAI-004: Export T3 as decoder-with-past, implement KV-cache decode loop + sampling
+
+**What changed**: Added `export/export_t3.py`, which exports T3's Llama-style backbone as two ONNX
+graphs plus two raw embedding-table `.npy` files. `transformers==5.2.0`'s `LlamaModel` is built
+entirely around `Cache`/`DynamicCache` objects and `masking_utils.create_causal_mask`, which don't
+trace through the legacy `torch.onnx.export` tracer this repo already uses (ADR-0002) — so
+`T3DecoderExport`/`_ExportDecoderLayer` hand-roll the same Llama math (RMSNorm, RoPE reusing the
+model's own precomputed llama3-scaled `inv_freq` buffer, SwiGLU MLP, no GQA since
+`num_key_value_heads == num_attention_heads`) directly against `T3.tfmr`'s real submodules — no
+weight copying, no Cache object. See ADR-0005 for the full rationale, including why the KV-cache is
+one stacked `(layers, k/v, batch, heads, seq, head_dim)` tensor rather than 60 per-layer-named
+tensors. `T3CondPrefillExport` separately reproduces `T3.prepare_input_embeds()` plus
+`T3.inference()`'s double-BOS-embedding construction (a real quirk in the reference — two
+numerically-identical BOS embeddings get concatenated back to back before the first decoder
+forward). `export/_common.py` gained `load_t3()`.
+
+Added `crates/vocalai-core/src/t3.rs`: the sampling math (CFG combine, repetition penalty,
+temperature, min-p, top-p, greedy/multinomial selection) is generic over the decoder-step call,
+mirroring `s3gen::solve_euler`'s pattern (ADR-0004) — 22 new Rust unit tests cover it with synthetic
+decoders/logits, no ONNX Runtime session needed. Per-step new-token embedding is a plain
+`speech_emb`/`speech_pos_emb` weight-table row lookup in Rust (`embed_speech_token`,
+`load_embedding_table` via the new `ndarray-npy` dependency), not an extra ONNX call per generated
+token. Added `rand` for multinomial sampling.
+
+Added `export/parity_check.py::check_t3`. `T3.inference()`'s `do_sample` parameter is accepted but
+never actually read in the reference — sampling is always stochastic (`torch.multinomial`), and
+PyTorch's/Rust's RNGs are unrelated, so comparing free-running sampled token sequences across
+languages would be meaningless (one divergent token cascades into a different sequence). Instead,
+`check_t3` runs a **greedy** (argmax) replica of the real reference forward pass
+(`_greedy_reference_t3` — same `Cache`, same weights, same RoPE, just non-stochastic selection)
+alongside a free-running greedy loop driving the exported ONNX graphs (`_greedy_onnx_t3`), and
+compares both the resulting token sequences (must match exactly) and the per-step processed logits
+(within tolerance). Passed on first real run against the downloaded checkpoint:
+`max_abs_diff=4.768e-05` (well within `atol=1e-4`), 6/6 greedy tokens matching.
+
+**Why**: Milestone 4 is the main technical risk of Phase 1 (plan §9) — T3 is the only exported
+component with real autoregressive control flow. The hand-rolled decoder was necessary because
+tracing HF's own `LlamaModel.forward` would mean monkeypatching private `transformers` internals
+(`cache_utils`, `masking_utils`) at a specific minor version — a worse maintenance bet than
+re-implementing the small, stable, public Llama math directly (ADR-0005). Greedy-decode parity was
+chosen over the plan's literal "fixed seed" wording because a "fixed seed" doesn't make stochastic
+sampling comparable across two unrelated RNG implementations; greedy removes randomness from the
+comparison while still exercising the real end-to-end forward pass.
+
+**What was rejected**: Tracing `T3HuggingfaceBackend.forward` directly with `Cache`/mask internals
+monkeypatched (fragile against `transformers` version churn). Per-layer-named
+`past_key_values.N.key/.value` ONNX I/O matching the `optimum`/HF convention (no external consumer
+in this pipeline needs it; one stacked tensor is less Rust-side bookkeeping). A third ONNX graph for
+the per-step new-token embedding (a trivial lookup, not worth an ONNX Runtime call per generated
+token). See ADR-0005 for the full list.
+
+**What's next**: Milestone 5 — export PerthNet, wire watermarking into output
+(`docs/issues.md` `VAI-005`).
+
+---
+
 ## 2026-08-16 — fix: S3 tokenizer export corrupted `freqs_cis` on a fresh `models/` dir
 
 **What changed**: `export_s3tokenizer.py::build_wrapper()` mutates `encoder.freqs_cis` in place on

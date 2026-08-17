@@ -202,4 +202,59 @@ also export it on demand if missing).
 
 ---
 
+## ONNX export + parity check: T3 decoder-with-past (Milestone 4)
+
+**Test command(s)**:
+```bash
+cd export
+source .venv/bin/activate  # if not already active — see docs/dev-setup.md §2
+
+python export_t3.py
+python parity_check.py --component t3
+```
+
+**Setup**: Same venv as prior milestones. First run downloads `t3_cfg.safetensors` from
+`ResembleAI/chatterbox` (in addition to `ve.safetensors`/`s3gen.safetensors`). No `--voice`
+reference audio needed — `check_t3` uses a fixed-seed synthetic conditioning fixture (random
+speaker embedding / cond-prompt tokens / emotion value), matching the pattern `check_s3gen` uses.
+
+**What to observe**:
+- `export_t3.py` prints four `Exported ...` lines with no traceback: `t3_cond_prefill.onnx`,
+  `t3_decoder.onnx`, `t3_speech_emb.npy`, `t3_speech_pos_emb.npy` under `models/`.
+- `parity_check.py --component t3` prints one `[PASS]`/`[FAIL]` line with `max_abs_diff`.
+
+**Pass criteria**:
+- `export_t3.py` exits 0 and produces all four files under `models/`.
+- `parity_check.py --component t3` exits 0 and prints `[PASS] t3: max_abs_diff=...` — expect an
+  order of `~5e-5` (well within `atol=1e-4`). This means both: (a) a **greedy** (argmax) 6-token
+  free-running decode driving the exported ONNX graphs produced the exact same token sequence as a
+  greedy replica of the real reference forward pass, and (b) the per-step processed logits agree
+  within tolerance. See `docs/decisions/0005-t3-hand-rolled-decoder-export.md` and the VAI-004
+  CHANGELOG entry for why this check uses greedy decoding rather than comparing stochastic samples
+  (PyTorch's and any Rust-side RNG are unrelated, so free-running sampled sequences can't be
+  compared across languages).
+- `python -m pytest` in `export/` (or `make check` from the repo root) passes
+  `export/tests/test_parity_check.py::test_t3_export_matches_pytorch_reference_greedy_decode`.
+- `cargo test -p vocalai-core t3::` passes all 22 tests — pure `ndarray`/`rand` math tests (CFG
+  combine, repetition penalty, temperature, min-p, top-p, greedy/multinomial selection, embedding
+  lookup, `.npy` round-trip, a synthetic end-to-end decode loop) — these run offline, no `models/`
+  directory or ONNX Runtime session required.
+
+**Fail indicators**:
+- Any `[FAIL]` line, or `max_abs_diff` far above `1e-4`/`1e-3` (atol/rtol) — check whether
+  `T3DecoderExport`/`_ExportDecoderLayer` (`export/export_t3.py`) still matches
+  `transformers.models.llama.modeling_llama`'s RMSNorm/RoPE/attention/MLP math exactly (this repo
+  pins `transformers==5.2.0`; a version bump could change internals subtly — see ADR-0005), or
+  whether `T3CondPrefillExport` still reproduces `T3.prepare_input_embeds()` + `T3.inference()`'s
+  double-BOS-embedding construction faithfully.
+- A token-sequence mismatch (not just a logits tolerance miss) between the greedy PyTorch and
+  greedy ONNX runs points at a KV-cache bookkeeping bug (wrong layer/key-vs-value ordering in the
+  stacked `past_kv`/`present_kv` tensor, or a RoPE position-id off-by-one across the prefill→decode
+  boundary) rather than a small numerical-precision issue.
+- A Rust `t3::` test failure with no `models/` directory present indicates an actual math bug in
+  the sampling/decode-loop logic, not a missing-fixture issue — these tests never touch ONNX
+  Runtime (synthetic decoder closures and hand-computed expected values only).
+
+---
+
 *Add new sections below this line as features land. Group by feature area (e.g. CLI, export pipeline, EP selection, voice cloning).*

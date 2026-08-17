@@ -63,6 +63,25 @@ def load_s3gen(device: str = "cpu"):
     return s3gen
 
 
+@lru_cache(maxsize=None)
+def load_t3(device: str = "cpu"):
+    """Load just the T3 checkpoint (downloads t3_cfg.safetensors on first run). See
+    load_voice_encoder() for why this bypasses ChatterboxTTS.from_pretrained()."""
+    from huggingface_hub import hf_hub_download
+    from safetensors.torch import load_file
+
+    from chatterbox.models.t3 import T3
+
+    ckpt = hf_hub_download(repo_id=REPO_ID, filename="t3_cfg.safetensors")
+    t3_state = load_file(ckpt)
+    if "model" in t3_state.keys():
+        t3_state = t3_state["model"][0]
+    t3 = T3()
+    t3.load_state_dict(t3_state)
+    t3.to(device).eval()
+    return t3
+
+
 def export_onnx(
     module: torch.nn.Module,
     example_inputs: tuple,

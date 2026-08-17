@@ -14,17 +14,34 @@ from dataclasses import dataclass
 import numpy as np
 import onnxruntime as ort
 import torch
+from transformers.generation.logits_process import (
+    MinPLogitsWarper,
+    RepetitionPenaltyLogitsProcessor,
+    TopPLogitsWarper,
+)
 
 import export_hifigan
 import export_s3gen
 import export_s3tokenizer
+import export_t3
 import export_ve
-from _common import allclose_report, load_s3gen, models_dir
+from _common import allclose_report, load_s3gen, load_t3, models_dir
 
 DEFAULT_ATOL = 1e-4
 DEFAULT_RTOL = 1e-3
 
 S3GEN_N_TIMESTEPS = 10  # fixed by chatterbox/tts.py's s3gen.inference() call (no override, non-meanflow)
+
+# T3 parity fixture / sampling knobs. A short `max_new_tokens` keeps the greedy
+# free-running comparison (see check_t3) fast and low-risk: greedy argmax on two
+# independently-computed (PyTorch vs ONNX) logit tensors can in principle diverge
+# on a near-exact tie, and risk compounds with every extra step.
+T3_MAX_NEW_TOKENS = 6
+T3_TEMPERATURE = 0.8
+T3_TOP_P = 1.0
+T3_MIN_P = 0.05
+T3_REPETITION_PENALTY = 1.2
+T3_CFG_WEIGHT = 0.5
 
 
 @dataclass
@@ -178,11 +195,270 @@ def check_s3gen(atol: float, rtol: float) -> ParityResult:
     return ParityResult("s3gen", mel_passed and wav_passed, max(mel_diff, wav_diff))
 
 
+def _softmax_np(logits: np.ndarray) -> np.ndarray:
+    shifted = logits - logits.max()
+    exps = np.exp(shifted)
+    return exps / exps.sum()
+
+
+def _apply_repetition_penalty_np(logits: np.ndarray, generated_ids: list[int], penalty: float) -> np.ndarray:
+    """Numpy replica of `RepetitionPenaltyLogitsProcessor`'s 2D-scores path (see
+    `crates/vocalai-core/src/t3.rs::apply_repetition_penalty` for the Rust twin)."""
+    logits = logits.copy()
+    for tok in set(generated_ids):
+        v = logits[tok]
+        logits[tok] = v * penalty if v < 0 else v / penalty
+    return logits
+
+
+def _apply_min_p_np(logits: np.ndarray, min_p: float) -> np.ndarray:
+    """Numpy replica of `MinPLogitsWarper` (see `t3.rs::apply_min_p`)."""
+    probs = _softmax_np(logits)
+    top_idx = int(np.argmax(probs))
+    threshold = min_p * probs[top_idx]
+    out = logits.copy()
+    mask = (probs < threshold) & (np.arange(len(logits)) != top_idx)
+    out[mask] = -np.inf
+    return out
+
+
+def _apply_top_p_np(logits: np.ndarray, top_p: float) -> np.ndarray:
+    """Numpy replica of `TopPLogitsWarper` (see `t3.rs::apply_top_p`)."""
+    order = np.argsort(logits)  # ascending
+    sorted_logits = logits[order]
+    probs = _softmax_np(sorted_logits)
+    cumulative = np.cumsum(probs)
+    remove = cumulative <= (1.0 - top_p)
+    remove[-1] = False  # min_tokens_to_keep = 1
+    out = logits.copy()
+    out[order[remove]] = -np.inf
+    return out
+
+
+def _process_step_logits_np(
+    cond: np.ndarray,
+    uncond: np.ndarray,
+    generated_ids: list[int],
+    cfg_weight: float,
+    repetition_penalty: float,
+    temperature: float,
+    min_p: float,
+    top_p: float,
+) -> np.ndarray:
+    logits = cond + cfg_weight * (cond - uncond)
+    logits = _apply_repetition_penalty_np(logits, generated_ids, repetition_penalty)
+    if temperature != 1.0:
+        logits = logits / temperature
+    logits = _apply_min_p_np(logits, min_p)
+    logits = _apply_top_p_np(logits, top_p)
+    return logits
+
+
+def _t3_fixture(t3):
+    """Fixed-seed synthetic T3 conditioning + text tokens — analogous to
+    `check_s3gen`'s random-tensor fixture (no real reference audio/text needed for
+    a numerical-parity check; real audio preprocessing is Milestone 6 scope)."""
+    torch.manual_seed(0)
+    speaker_emb = torch.randn(1, export_t3.SPEAKER_EMBED_SIZE)
+    cond_prompt_speech_tokens = torch.randint(0, 6561, (1, export_t3.SPEECH_COND_PROMPT_LEN))
+    emotion_adv = torch.full((1, 1, 1), 0.5)
+
+    sot, eot = t3.hp.start_text_token, t3.hp.stop_text_token
+    text_tokens = torch.randint(1, 254, (1, export_t3.EXAMPLE_LEN_TEXT))
+    text_tokens = torch.cat([text_tokens, text_tokens], dim=0)  # CFG-doubled, per tts.py::generate()
+    text_tokens = torch.nn.functional.pad(text_tokens, (1, 0), value=sot)
+    text_tokens = torch.nn.functional.pad(text_tokens, (0, 1), value=eot)
+
+    from chatterbox.models.t3.modules.cond_enc import T3Cond
+
+    t3_cond = T3Cond(
+        speaker_emb=speaker_emb,
+        cond_prompt_speech_tokens=cond_prompt_speech_tokens,
+        emotion_adv=emotion_adv,
+    )
+    return t3_cond, text_tokens, speaker_emb, cond_prompt_speech_tokens, emotion_adv
+
+
+def _greedy_reference_t3(t3, t3_cond, text_tokens, cfg_weight: float) -> tuple[list[int], list[np.ndarray]]:
+    """Near-identical copy of `T3.inference()` (chatterbox/models/t3/t3.py), with
+    greedy (argmax) token selection in place of `torch.multinomial`. PyTorch's and
+    Rust's RNGs are unrelated, so a free-running *stochastic* comparison across
+    languages is meaningless; greedy removes randomness from the comparison
+    entirely while still exercising the real reference forward pass (real `Cache`,
+    real RoPE, real weights) end to end. Returns (predicted_token_ids,
+    per_step_processed_logits) — the latter is what's compared against the ONNX
+    side for numerical parity.
+    """
+    from chatterbox.models.t3.inference.t3_hf_backend import T3HuggingfaceBackend
+
+    text_tokens = torch.atleast_2d(text_tokens).to(dtype=torch.long, device=t3.device)
+    initial_speech_tokens = t3.hp.start_speech_token * torch.ones_like(text_tokens[:, :1])
+    embeds, _ = t3.prepare_input_embeds(
+        t3_cond=t3_cond, text_tokens=text_tokens, speech_tokens=initial_speech_tokens, cfg_weight=cfg_weight
+    )
+
+    bos_token = torch.tensor([[t3.hp.start_speech_token]], dtype=torch.long, device=t3.device)
+    bos_embed = t3.speech_emb(bos_token) + t3.speech_pos_emb.get_fixed_embedding(0)
+    bos_embed = torch.cat([bos_embed, bos_embed])
+    inputs_embeds = torch.cat([embeds, bos_embed], dim=1)
+
+    patched_model = T3HuggingfaceBackend(
+        config=t3.cfg, llama=t3.tfmr, speech_enc=t3.speech_emb, speech_head=t3.speech_head,
+        alignment_stream_analyzer=None,
+    )
+
+    generated_ids = bos_token.clone()
+    predicted: list[int] = []
+    per_step_logits: list[np.ndarray] = []
+
+    repetition_penalty_processor = RepetitionPenaltyLogitsProcessor(penalty=T3_REPETITION_PENALTY)
+    min_p_warper = MinPLogitsWarper(min_p=T3_MIN_P)
+    top_p_warper = TopPLogitsWarper(top_p=T3_TOP_P)
+
+    output = patched_model(
+        inputs_embeds=inputs_embeds, past_key_values=None, use_cache=True,
+        output_attentions=True, output_hidden_states=True, return_dict=True,
+    )
+    past = output.past_key_values
+
+    for i in range(T3_MAX_NEW_TOKENS):
+        logits_step = output.logits[:, -1, :]
+        cond, uncond = logits_step[0:1, :], logits_step[1:2, :]
+        cfg = torch.as_tensor(cfg_weight, device=cond.device, dtype=cond.dtype)
+        logits = cond + cfg * (cond - uncond)
+
+        ids_for_proc = generated_ids[:1, ...]
+        logits = repetition_penalty_processor(ids_for_proc, logits)
+        if T3_TEMPERATURE != 1.0:
+            logits = logits / T3_TEMPERATURE
+        logits = min_p_warper(ids_for_proc, logits)
+        logits = top_p_warper(ids_for_proc, logits)
+        per_step_logits.append(logits.detach().numpy().reshape(-1).copy())
+
+        next_token = logits.argmax(dim=-1, keepdim=True)
+        predicted.append(int(next_token.item()))
+        generated_ids = torch.cat([generated_ids, next_token], dim=1)
+        if next_token.view(-1) == t3.hp.stop_speech_token:
+            break
+
+        next_token_embed = t3.speech_emb(next_token) + t3.speech_pos_emb.get_fixed_embedding(i + 1)
+        next_token_embed = torch.cat([next_token_embed, next_token_embed])
+        output = patched_model(
+            inputs_embeds=next_token_embed, past_key_values=past,
+            output_attentions=True, output_hidden_states=True, return_dict=True,
+        )
+        past = output.past_key_values
+
+    return predicted, per_step_logits
+
+
+def _greedy_onnx_t3(
+    cond_prefill_path,
+    decoder_path,
+    speech_emb_table: np.ndarray,
+    speech_pos_emb_table: np.ndarray,
+    speaker_emb: np.ndarray,
+    cond_prompt_speech_tokens: np.ndarray,
+    emotion_adv: np.ndarray,
+    text_tokens: np.ndarray,
+    cfg_weight: float,
+) -> tuple[list[int], list[np.ndarray]]:
+    """Free-running greedy decode loop driving the exported ONNX graphs — the exact
+    Python-side twin of `crates/vocalai-core/src/t3.rs::generate_speech_tokens`."""
+    cond_prefill_session = ort.InferenceSession(str(cond_prefill_path), providers=["CPUExecutionProvider"])
+    decoder_session = ort.InferenceSession(str(decoder_path), providers=["CPUExecutionProvider"])
+
+    cfg_uncond_mask = np.array([[[1.0]], [[0.0]]], dtype=np.float32) if cfg_weight > 0.0 else np.ones((2, 1, 1), dtype=np.float32)
+    (inputs_embeds,) = cond_prefill_session.run(
+        None,
+        {
+            "speaker_emb": speaker_emb.astype(np.float32),
+            "cond_prompt_speech_tokens": cond_prompt_speech_tokens.astype(np.int64),
+            "emotion_adv": emotion_adv.astype(np.float32),
+            "text_tokens": text_tokens.astype(np.int64),
+            "cfg_uncond_mask": cfg_uncond_mask,
+        },
+    )
+
+    batch = inputs_embeds.shape[0]
+    past_kv = np.zeros((export_t3.NUM_LAYERS, 2, batch, export_t3.NUM_HEADS, 0, export_t3.HEAD_DIM), dtype=np.float32)
+
+    start_speech_token, stop_speech_token = 6561, 6562
+    generated_ids = [start_speech_token]
+    predicted: list[int] = []
+    per_step_logits: list[np.ndarray] = []
+
+    logits, past_kv = decoder_session.run(None, {"inputs_embeds": inputs_embeds.astype(np.float32), "past_kv": past_kv})
+
+    for i in range(T3_MAX_NEW_TOKENS):
+        last_logits = logits[:, -1, :]
+        processed = _process_step_logits_np(
+            last_logits[0], last_logits[1], generated_ids, cfg_weight,
+            T3_REPETITION_PENALTY, T3_TEMPERATURE, T3_MIN_P, T3_TOP_P,
+        )
+        per_step_logits.append(processed.copy())
+
+        next_token = int(np.argmax(processed))
+        predicted.append(next_token)
+        generated_ids.append(next_token)
+        if next_token == stop_speech_token:
+            break
+
+        row = speech_emb_table[next_token] + speech_pos_emb_table[i + 1]
+        next_embed = np.stack([row, row])[:, None, :].astype(np.float32)
+        logits, past_kv = decoder_session.run(None, {"inputs_embeds": next_embed, "past_kv": past_kv})
+
+    return predicted, per_step_logits
+
+
+def check_t3(atol: float, rtol: float) -> ParityResult:
+    t3 = load_t3()
+    t3_cond, text_tokens, speaker_emb, cond_prompt_speech_tokens, emotion_adv = _t3_fixture(t3)
+
+    cond_prefill_path = models_dir() / "t3_cond_prefill.onnx"
+    decoder_path = models_dir() / "t3_decoder.onnx"
+    speech_emb_path = models_dir() / "t3_speech_emb.npy"
+    speech_pos_emb_path = models_dir() / "t3_speech_pos_emb.npy"
+    if not (cond_prefill_path.exists() and decoder_path.exists() and speech_emb_path.exists()):
+        export_t3.export(models_dir())
+
+    speech_emb_table = np.load(speech_emb_path)
+    speech_pos_emb_table = np.load(speech_pos_emb_path)
+
+    ref_tokens, ref_logits = _greedy_reference_t3(t3, t3_cond, text_tokens, T3_CFG_WEIGHT)
+    onnx_tokens, onnx_logits = _greedy_onnx_t3(
+        cond_prefill_path,
+        decoder_path,
+        speech_emb_table,
+        speech_pos_emb_table,
+        speaker_emb.numpy(),
+        cond_prompt_speech_tokens.numpy(),
+        emotion_adv.numpy(),
+        text_tokens.numpy(),
+        T3_CFG_WEIGHT,
+    )
+
+    tokens_match = ref_tokens == onnx_tokens
+    max_diff = 0.0
+    logits_passed = True
+    for ref, onnx in zip(ref_logits, onnx_logits):
+        finite_mask = np.isfinite(ref) & np.isfinite(onnx)
+        passed, diff = allclose_report(ref[finite_mask], onnx[finite_mask], atol, rtol)
+        logits_passed = logits_passed and passed
+        max_diff = max(max_diff, diff)
+        # -inf entries (top-p/min-p masking) must land on the same token indices.
+        if not np.array_equal(np.isfinite(ref), np.isfinite(onnx)):
+            logits_passed = False
+
+    return ParityResult("t3", tokens_match and logits_passed, max_diff)
+
+
 CHECKS = {
     "hifigan": check_hifigan,
     "ve": check_ve,
     "s3tokenizer": check_s3tokenizer,
     "s3gen": check_s3gen,
+    "t3": check_t3,
 }
 
 

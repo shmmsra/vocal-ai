@@ -57,3 +57,8 @@ def test_s3tokenizer_export_matches_pytorch_reference():
 def test_s3gen_export_matches_pytorch_reference_mel_to_waveform():
     result = parity_check.check_s3gen(ATOL, RTOL)
     assert result.passed, f"max_abs_diff={result.max_abs_diff}"
+
+
+def test_t3_export_matches_pytorch_reference_greedy_decode():
+    result = parity_check.check_t3(ATOL, RTOL)
+    assert result.passed, f"max_abs_diff={result.max_abs_diff}"
