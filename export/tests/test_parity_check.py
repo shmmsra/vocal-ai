@@ -65,6 +65,7 @@ def test_s3gen_export_matches_pytorch_reference_mel_to_waveform():
 
 
 @pytest.mark.parity
+@pytest.mark.heavy_build
 def test_t3_export_matches_pytorch_reference_greedy_decode():
     result = parity_check.check_t3(ATOL, RTOL)
     assert result.passed, f"max_abs_diff={result.max_abs_diff}"

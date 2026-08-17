@@ -6,6 +6,57 @@
 
 ---
 
+## 2026-08-18 — ci: exclude T3's parity check from CI (still local-only), add `heavy_build` marker
+
+**What changed**: The previous entry's `check_t3` memory fix didn't actually fix CI — a
+second real run still failed (`Terminated`, cancelled), because that fix addressed the
+*wrong phase*. Root-caused with real measurements (`/usr/bin/time -l`, forcing a genuinely
+fresh export by clearing the locally-cached `models/*.onnx` first — the earlier "fix"
+had been silently verified against a stale local cache, the exact trap the VAI-002
+postmortem already flagged): `torch.onnx.export` tracing/serializing `t3_decoder.onnx`
+from scratch peaks at **~9GB**, independent of `do_constant_folding`; loading an
+already-built `.onnx` and running inference on it peaks at only ~2.3GB. `external_data=True`
+(the parameter's stated default) is silently ignored on this torch version's legacy
+(non-`dynamo`) export path — confirmed empirically (same 9GB peak, same single-file
+output, whether passed explicitly or not). This repo is a private GitHub repo (confirmed:
+unauthenticated API check returns 404), meaning the free-tier hosted runner — nowhere near
+9GB of headroom.
+
+Since the expensive part is *building* the ONNX graph, not verifying an already-built one,
+and CI has no way to obtain a pre-built `.onnx` without either committing model artifacts
+(violates the no-binary-artifacts constraint) or fetching from a persistent store (out of
+scope here), T3's parity test now gets a second marker, `@pytest.mark.heavy_build`
+(`export/pytest.ini`), and CI's `parity.yml` runs a new `make test-py-parity-ci`
+(`pytest -m "parity and not heavy_build"`) instead of the full `test-py-parity`. T3's
+parity check still runs locally (`make test-py-parity`/`make check`, unchanged) and is now
+a **local-only, developer-run gate**: must be run manually before committing changes to
+`export/export_t3.py` or `crates/vocalai-core/src/t3.rs`. See ADR-0007.
+
+**Why**: The hard parity-check constraint (`CLAUDE.md` §1) can't be satisfied by CI for a
+component whose build step needs more memory than the runner has — no amount of in-process
+memory-lifecycle tuning changes that, since the ~9GB is the *building* cost, which any CI
+run on a fresh checkout must pay. Rather than keep CI red or silently skip the hard
+constraint entirely, the enforcement mechanism for this one component moves from
+"automatic, every commit" to "manual, before committing T3-affecting changes" — a
+deliberate, documented exception, not a silent gap.
+
+**What was rejected**: Caching the built `.onnx` across CI runs (the *first* cache-populating
+run still needs the same ~9GB peak — doesn't fix the actual failure). Switching to the
+`dynamo=True` exporter or splitting the decoder into per-layer ONNX graphs (both plausible
+future fixes, both substantial redesigns disproportionate to an urgent CI fix — the latter
+would reopen ADR-0005's approved single-graph decision). Paying for a larger runner or
+self-hosting one (a legitimate option, but a billing/infra decision for the repo owner to
+make deliberately, not something to reach for while fixing a test).
+
+**What's next**: Milestone 5 — export PerthNet, wire watermarking into output (`docs/issues.md`
+`VAI-005`); mark its parity test `@pytest.mark.heavy_build` too if its export step turns out
+to need similarly large memory. Separately: Milestone 7's release-build pipeline will hit
+this same ~9GB ceiling for T3 (building the release artifact requires the same
+`torch.onnx.export` call) — left open per the repo owner's request, revisit when that
+milestone starts.
+
+---
+
 ## 2026-08-17 — ci: split CI into fast + parity workflows, fix `check_t3` OOM
 
 **What changed**: VAI-004's `check_t3` (previous entry) OOM-killed CI (`Killed`, exit 143):

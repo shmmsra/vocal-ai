@@ -7,8 +7,9 @@ help:
 	@echo "  make check         Pre-commit gate: fmt-check + clippy + cargo test + pytest (everything)"
 	@echo "  make setup-hooks   Install .git/hooks/pre-commit (run once after clone)"
 	@echo "  make test          Run the test suite only (Rust + Python, everything)"
-	@echo "  make test-py-fast    Python tests that don't need a real checkpoint download"
-	@echo "  make test-py-parity  Python tests that download a real checkpoint + run ONNX-vs-PyTorch parity"
+	@echo "  make test-py-fast       Python tests that don't need a real checkpoint download"
+	@echo "  make test-py-parity     Python tests that download a real checkpoint + run ONNX-vs-PyTorch parity"
+	@echo "  make test-py-parity-ci  Same, minus heavy_build tests too large to export on a CI runner"
 	@echo "  make typecheck     Run cargo check only"
 	@echo "  make lint          Run clippy only"
 	@echo "  make build         Build the project"
@@ -49,6 +50,13 @@ test-py-fast:
 
 test-py-parity:
 	cd export && if [ -x .venv/bin/python ]; then .venv/bin/python -m pytest -m parity; else pytest -m parity; fi
+
+# What CI's parity.yml actually runs: same as test-py-parity minus `heavy_build`
+# tests (currently just T3 — its first-time ONNX export peaks at ~9GB, more than
+# a free-tier CI runner has; see docs/decisions/0007-exclude-t3-parity-from-ci.md).
+# `heavy_build` tests still run locally via plain `test-py-parity`/`check`.
+test-py-parity-ci:
+	cd export && if [ -x .venv/bin/python ]; then .venv/bin/python -m pytest -m "parity and not heavy_build"; else pytest -m "parity and not heavy_build"; fi
 
 test: test-rs test-py
 

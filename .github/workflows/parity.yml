@@ -1,6 +1,6 @@
 # vocal-ai CI — parity gate: downloads real Chatterbox checkpoints from the
-# HuggingFace Hub and runs export/parity_check.py's full ONNX-vs-PyTorch numerical
-# parity suite (hifigan, ve, s3tokenizer, s3gen, t3).
+# HuggingFace Hub and runs export/parity_check.py's ONNX-vs-PyTorch numerical
+# parity suite (hifigan, ve, s3tokenizer, s3gen — NOT t3, see below).
 #
 # Split from the fast lint/unit-test gate (see ci.yml) — see
 # docs/decisions/0006-split-ci-into-fast-and-parity-workflows.md for why. Same
@@ -8,6 +8,15 @@
 # filtered — per CLAUDE.md §1, no exported component may ship into vocalai-core
 # until this passes, so it runs on every commit exactly like the fast gate does,
 # just as its own job so it can be reasoned about (and resourced) separately.
+#
+# T3's parity test is excluded here (`make test-py-parity-ci`, not
+# `test-py-parity`): building its ONNX export from scratch (not just verifying an
+# already-built one) measured ~9GB peak memory — more than this free-tier private-
+# repo runner has. That's inherent to `torch.onnx.export` tracing a ~2GB model, not
+# specific to CI — see docs/decisions/0007-exclude-t3-parity-from-ci.md. It still
+# runs locally via `make test-py-parity`/`make check` and must be run manually
+# before committing changes to `export/export_t3.py` or
+# `crates/vocalai-core/src/t3.rs`.
 
 name: Parity
 
@@ -27,11 +36,10 @@ jobs:
         # `ubuntu-latest` ships ~30GB of preinstalled toolchains (.NET, Android SDK,
         # GHC, CodeQL, ...) we never use. The export/ toolchain (torch, diffusers,
         # transformers, gradio) plus HuggingFace checkpoints downloaded fresh every
-        # run (ve.safetensors + s3gen.safetensors + t3_cfg.safetensors, the latter
-        # alone ~2GB) plus their exported .onnx artifacts (t3_decoder.onnx alone
-        # ~1.9GB) are enough to exhaust the runner's remaining disk mid-run — this
-        # reclaims headroom before any of that happens (standard GitHub Actions
-        # idiom for disk-constrained jobs).
+        # run (ve.safetensors + s3gen.safetensors, ~1GB total) plus their exported
+        # .onnx artifacts (s3tokenizer.onnx alone ~470MB) are enough to make disk a
+        # real constraint on this runner — this reclaims headroom before any of
+        # that happens (standard GitHub Actions idiom for disk-constrained jobs).
         run: |
           sudo rm -rf /usr/share/dotnet
           sudo rm -rf /usr/local/lib/android
@@ -50,5 +58,5 @@ jobs:
         run: pip install -r export/requirements.txt
 
       # ── The actual gate ──────────────────────────────────────────────────────
-      - name: Run ONNX-vs-PyTorch parity checks
-        run: make test-py-parity
+      - name: Run ONNX-vs-PyTorch parity checks (excl. T3, see header comment)
+        run: make test-py-parity-ci

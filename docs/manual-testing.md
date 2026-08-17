@@ -43,32 +43,48 @@ The agent writes these for every new runtime-affecting change. The human runs th
 
 ---
 
-## CI split: fast gate vs parity gate
+## CI split: fast gate vs parity gate vs local-only heavy builds
 
 **Test command(s)**:
 ```bash
-make test-py-fast    # mirrors .github/workflows/ci.yml's Python step
-make test-py-parity  # mirrors .github/workflows/parity.yml's Python step
-make check            # everything (both, plus Rust) — still the full local gate
+make test-py-fast        # mirrors .github/workflows/ci.yml's Python step
+make test-py-parity-ci   # mirrors .github/workflows/parity.yml's Python step (excl. T3)
+make test-py-parity      # everything test-py-parity-ci runs, PLUS T3 (local-only, see below)
+make check                # everything (fast + parity, incl. T3, plus Rust) — full local gate
 ```
 
-**Setup**: Same as the export toolchain requirements below. `test-py-parity` downloads real
-HuggingFace checkpoints on first run.
+**Setup**: Same as the export toolchain requirements below. Any `parity`-marked target
+downloads real HuggingFace checkpoints on first run.
 
 **What to observe**: `test-py-fast` collects/runs only `test_requirements.py` +
-`_common.allclose_report`'s 3 pure tests (4 total, "5 deselected"). `test-py-parity` runs
-only the 5 `@pytest.mark.parity`-marked tests ("4 deselected"). `make check` still runs all 9.
+`_common.allclose_report`'s 3 pure tests (4 total, "5 deselected"). `test-py-parity-ci`
+runs 4 of the 5 `@pytest.mark.parity` tests — hifigan/ve/s3tokenizer/s3gen ("5
+deselected", since the T3 test carries *two* markers and gets excluded by
+`-m "parity and not heavy_build"`). `test-py-parity` runs all 5 (including T3, "4
+deselected"). `make check` still runs all 9.
 
 **Pass criteria**:
-- `make test-py-fast` exits 0 in a few seconds, no checkpoint download.
-- `make test-py-parity` exits 0 (downloads checkpoints on a clean `~/.cache/huggingface`).
+- `make test-py-fast` / `make test-py-parity-ci` exit 0 in seconds to ~15s, no T3 checkpoint
+  download needed for either.
+- `make test-py-parity` exits 0 (downloads `t3_cfg.safetensors` too, ~2GB, on a clean
+  `~/.cache/huggingface`; the export step alone measures ~9GB peak memory — fine on a real
+  dev machine, not on this repo's free-tier CI runner, see ADR-0007).
 - `make check` exits 0 and runs all 9 Python tests + all Rust tests (unchanged from before
-  the split — see ADR-0006).
+  the CI split — see ADR-0006).
 
 **Fail indicators**:
 - A new parity-style test (downloads a checkpoint, calls a `check_*` function) that isn't
   decorated `@pytest.mark.parity` — it'll silently run in `ci.yml`'s fast job instead of
   `parity.yml`, slowing down/breaking the fast gate (see ADR-0006's "New commitments").
+- A new component whose *export* (not just verification) needs more memory than CI has,
+  added to `parity.yml` without a `@pytest.mark.heavy_build` marker — will fail CI the same
+  way T3 did (see ADR-0007's "New commitments": check this *before* assuming a new
+  `check_*` test can run in CI unmodified).
+- **Before trusting a local `test-py-parity`/`check_t3` result as proof an export script is
+  correct after touching `export/export_t3.py`, clear `models/t3_*.onnx`/`models/t3_*.npy`
+  first** — same stale-cache trap as the Milestone 2 warning above: a cached `.onnx` file
+  silently skips the real export path, which is exactly where the ~9GB memory cost (and any
+  export-time bug) actually lives.
 - `test-py-fast` and `test-py-parity` together don't add up to all 9 collected tests —
   means `export/pytest.ini`'s marker registration or a test's decorator is wrong.
 
