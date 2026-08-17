@@ -9,6 +9,7 @@ run. See docs/dev-setup.md for the one-time venv setup.
 from __future__ import annotations
 
 import numpy as np
+import pytest
 
 from _common import allclose_report
 import parity_check
@@ -39,26 +40,31 @@ def test_allclose_report_fails_on_shape_mismatch():
     assert diff == float("inf")
 
 
+@pytest.mark.parity
 def test_hifigan_export_matches_pytorch_reference():
     result = parity_check.check_hifigan(ATOL, RTOL)
     assert result.passed, f"max_abs_diff={result.max_abs_diff}"
 
 
+@pytest.mark.parity
 def test_voice_encoder_export_matches_pytorch_reference():
     result = parity_check.check_ve(ATOL, RTOL)
     assert result.passed, f"max_abs_diff={result.max_abs_diff}"
 
 
+@pytest.mark.parity
 def test_s3tokenizer_export_matches_pytorch_reference():
     result = parity_check.check_s3tokenizer(ATOL, RTOL)
     assert result.passed, f"max_abs_diff={result.max_abs_diff}"
 
 
+@pytest.mark.parity
 def test_s3gen_export_matches_pytorch_reference_mel_to_waveform():
     result = parity_check.check_s3gen(ATOL, RTOL)
     assert result.passed, f"max_abs_diff={result.max_abs_diff}"
 
 
+@pytest.mark.parity
 def test_t3_export_matches_pytorch_reference_greedy_decode():
     result = parity_check.check_t3(ATOL, RTOL)
     assert result.passed, f"max_abs_diff={result.max_abs_diff}"

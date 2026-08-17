@@ -35,6 +35,11 @@ checkpoint from
 HuggingFace on first run and require `export/requirements.txt` installed, see `docs/dev-setup.md`).
 `make check` passes cleanly. No placeholder/ignored tests remain.
 
+**CI**: split into two workflows since 2026-08-17 — `.github/workflows/ci.yml` (fast:
+fmt/clippy/`cargo test`/`pytest -m "not parity"`) and `.github/workflows/parity.yml` (the 5
+real-checkpoint ONNX-vs-PyTorch tests, `pytest -m parity`). Same triggers as before (every
+push/PR to `main`); see ADR-0006 for why.
+
 ---
 
 ## What's next
@@ -52,6 +57,7 @@ The next logical work, in priority order. Update at the end of every session.
 
 | Date | Ticket | Summary | Commit |
 |------|--------|---------|--------|
+| 2026-08-17 | — | Split CI into fast + parity workflows (ADR-0006); fix `check_t3` OOM | *(pending — see next commit)* |
 | 2026-08-17 | VAI-004 | Export T3 as decoder-with-past (hand-rolled Llama, ADR-0005); KV-cache decode loop + sampling | `2e13c33` |
 | 2026-08-16 | VAI-003 | Export S3Gen flow estimator + Euler ODE loop, chain into HiFiGAN | `1bc9095` |
 | 2026-08-16 | VAI-002 | Export HiFiGAN/voice-encoder/S3-tokenizer to ONNX + `parity_check.py` | `820ff9a` |

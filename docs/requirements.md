@@ -13,7 +13,9 @@
 - [x] `docs/issues.md` ticket tracker initialised
 - [x] `docs/decisions/` ADR archive seeded with ADR-001
 - [x] Pre-commit gate (`make check`) wired up
-- [x] CI workflow mirrors the local gate
+- [x] CI workflow mirrors the local gate — since 2026-08-17 split into two workflows
+  (`ci.yml` fast, `parity.yml` real-checkpoint), same triggers, together covering
+  everything `make check` covers locally; see ADR-0006
 - [x] `docs/manual-testing.md` runbook initialised
 - [x] Repo hygiene files scaffolded (README, LICENSE, CODEOWNERS, `.editorconfig`, VS Code settings)
 

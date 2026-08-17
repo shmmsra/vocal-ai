@@ -1,0 +1,54 @@
+# vocal-ai CI — parity gate: downloads real Chatterbox checkpoints from the
+# HuggingFace Hub and runs export/parity_check.py's full ONNX-vs-PyTorch numerical
+# parity suite (hifigan, ve, s3tokenizer, s3gen, t3).
+#
+# Split from the fast lint/unit-test gate (see ci.yml) — see
+# docs/decisions/0006-split-ci-into-fast-and-parity-workflows.md for why. Same
+# triggers as ci.yml (every push/PR to main): this is not scheduled or path-
+# filtered — per CLAUDE.md §1, no exported component may ship into vocalai-core
+# until this passes, so it runs on every commit exactly like the fast gate does,
+# just as its own job so it can be reasoned about (and resourced) separately.
+
+name: Parity
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  parity:
+    name: ONNX-vs-PyTorch parity gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Free disk space
+        # `ubuntu-latest` ships ~30GB of preinstalled toolchains (.NET, Android SDK,
+        # GHC, CodeQL, ...) we never use. The export/ toolchain (torch, diffusers,
+        # transformers, gradio) plus HuggingFace checkpoints downloaded fresh every
+        # run (ve.safetensors + s3gen.safetensors + t3_cfg.safetensors, the latter
+        # alone ~2GB) plus their exported .onnx artifacts (t3_decoder.onnx alone
+        # ~1.9GB) are enough to exhaust the runner's remaining disk mid-run — this
+        # reclaims headroom before any of that happens (standard GitHub Actions
+        # idiom for disk-constrained jobs).
+        run: |
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /usr/local/lib/android
+          sudo rm -rf /opt/ghc
+          sudo rm -rf /opt/hostedtoolcache/CodeQL
+          df -h /
+
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          # No `cache: 'pip'`: see the disk-space comment above — same reasoning.
+
+      - name: Install Python export/ dependencies
+        run: pip install -r export/requirements.txt
+
+      # ── The actual gate ──────────────────────────────────────────────────────
+      - name: Run ONNX-vs-PyTorch parity checks
+        run: make test-py-parity

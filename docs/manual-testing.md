@@ -43,6 +43,37 @@ The agent writes these for every new runtime-affecting change. The human runs th
 
 ---
 
+## CI split: fast gate vs parity gate
+
+**Test command(s)**:
+```bash
+make test-py-fast    # mirrors .github/workflows/ci.yml's Python step
+make test-py-parity  # mirrors .github/workflows/parity.yml's Python step
+make check            # everything (both, plus Rust) — still the full local gate
+```
+
+**Setup**: Same as the export toolchain requirements below. `test-py-parity` downloads real
+HuggingFace checkpoints on first run.
+
+**What to observe**: `test-py-fast` collects/runs only `test_requirements.py` +
+`_common.allclose_report`'s 3 pure tests (4 total, "5 deselected"). `test-py-parity` runs
+only the 5 `@pytest.mark.parity`-marked tests ("4 deselected"). `make check` still runs all 9.
+
+**Pass criteria**:
+- `make test-py-fast` exits 0 in a few seconds, no checkpoint download.
+- `make test-py-parity` exits 0 (downloads checkpoints on a clean `~/.cache/huggingface`).
+- `make check` exits 0 and runs all 9 Python tests + all Rust tests (unchanged from before
+  the split — see ADR-0006).
+
+**Fail indicators**:
+- A new parity-style test (downloads a checkpoint, calls a `check_*` function) that isn't
+  decorated `@pytest.mark.parity` — it'll silently run in `ci.yml`'s fast job instead of
+  `parity.yml`, slowing down/breaking the fast gate (see ADR-0006's "New commitments").
+- `test-py-fast` and `test-py-parity` together don't add up to all 9 collected tests —
+  means `export/pytest.ini`'s marker registration or a test's decorator is wrong.
+
+---
+
 ## Bootstrap sanity check
 
 **Test command(s)**:

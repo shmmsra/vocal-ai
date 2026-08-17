@@ -4,9 +4,11 @@
 
 help:
 	@echo "Available targets:"
-	@echo "  make check         Pre-commit gate: fmt-check + clippy + cargo test + pytest"
+	@echo "  make check         Pre-commit gate: fmt-check + clippy + cargo test + pytest (everything)"
 	@echo "  make setup-hooks   Install .git/hooks/pre-commit (run once after clone)"
-	@echo "  make test          Run the test suite only (Rust + Python)"
+	@echo "  make test          Run the test suite only (Rust + Python, everything)"
+	@echo "  make test-py-fast    Python tests that don't need a real checkpoint download"
+	@echo "  make test-py-parity  Python tests that download a real checkpoint + run ONNX-vs-PyTorch parity"
 	@echo "  make typecheck     Run cargo check only"
 	@echo "  make lint          Run clippy only"
 	@echo "  make build         Build the project"
@@ -37,6 +39,16 @@ test-rs:
 
 test-py:
 	cd export && if [ -x .venv/bin/python ]; then .venv/bin/python -m pytest; else pytest; fi
+
+# `-m "not parity"`/`-m parity` split the suite along the same line as
+# .github/workflows/ci.yml vs parity.yml — see export/pytest.ini for the marker
+# definition and docs/decisions/0006-split-ci-into-fast-and-parity-workflows.md
+# for why they're two separate jobs.
+test-py-fast:
+	cd export && if [ -x .venv/bin/python ]; then .venv/bin/python -m pytest -m "not parity"; else pytest -m "not parity"; fi
+
+test-py-parity:
+	cd export && if [ -x .venv/bin/python ]; then .venv/bin/python -m pytest -m parity; else pytest -m parity; fi
 
 test: test-rs test-py
 

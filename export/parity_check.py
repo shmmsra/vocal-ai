@@ -9,6 +9,7 @@ exported component may be wired into vocalai-core until this passes for it.
 from __future__ import annotations
 
 import argparse
+import gc
 from dataclasses import dataclass
 
 import numpy as np
@@ -422,19 +423,34 @@ def check_t3(atol: float, rtol: float) -> ParityResult:
     if not (cond_prefill_path.exists() and decoder_path.exists() and speech_emb_path.exists()):
         export_t3.export(models_dir())
 
+    ref_tokens, ref_logits = _greedy_reference_t3(t3, t3_cond, text_tokens, T3_CFG_WEIGHT)
+
+    # Free the ~2GB PyTorch T3 model (and _common.load_t3's cached singleton)
+    # before loading the ONNX Runtime sessions below. A GitHub Actions runner
+    # doesn't have enough RAM to hold the live torch model, the in-memory ONNX
+    # protobuf built during export, and a loaded onnxruntime session on the same
+    # ~1.9GB graph all at once -- this OOM-killed CI before (see
+    # docs/decisions/0006-split-ci-into-fast-and-parity-workflows.md).
+    speaker_emb_np = speaker_emb.numpy()
+    cond_prompt_speech_tokens_np = cond_prompt_speech_tokens.numpy()
+    emotion_adv_np = emotion_adv.numpy()
+    text_tokens_np = text_tokens.numpy()
+    del t3, t3_cond, text_tokens, speaker_emb, cond_prompt_speech_tokens, emotion_adv
+    load_t3.cache_clear()
+    gc.collect()
+
     speech_emb_table = np.load(speech_emb_path)
     speech_pos_emb_table = np.load(speech_pos_emb_path)
 
-    ref_tokens, ref_logits = _greedy_reference_t3(t3, t3_cond, text_tokens, T3_CFG_WEIGHT)
     onnx_tokens, onnx_logits = _greedy_onnx_t3(
         cond_prefill_path,
         decoder_path,
         speech_emb_table,
         speech_pos_emb_table,
-        speaker_emb.numpy(),
-        cond_prompt_speech_tokens.numpy(),
-        emotion_adv.numpy(),
-        text_tokens.numpy(),
+        speaker_emb_np,
+        cond_prompt_speech_tokens_np,
+        emotion_adv_np,
+        text_tokens_np,
         T3_CFG_WEIGHT,
     )
 

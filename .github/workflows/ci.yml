@@ -1,7 +1,12 @@
-# vocal-ai CI — mirrors `make check` exactly.
+# vocal-ai CI — fast gate: lint/fmt/clippy + Rust tests + Python tests that don't
+# need a real checkpoint download.
 #
-# Whatever the local pre-commit gate runs, CI runs the same thing on Linux.
-# Drift between local and CI erodes the gate's authority — don't let them diverge.
+# Split from the heavier real-checkpoint parity checks (see parity.yml) — see
+# docs/decisions/0006-split-ci-into-fast-and-parity-workflows.md for why. Both
+# workflows run on the same triggers (every push/PR to main); together they cover
+# what `make check` covers locally. Nothing is skipped, just organized into two
+# jobs so a fast, cheap, offline gate isn't coupled to a slow, multi-GB-download,
+# memory-heavy one.
 
 name: CI
 
@@ -13,26 +18,10 @@ on:
 
 jobs:
   check:
-    name: Pre-commit gate
+    name: Pre-commit gate (fast)
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 15
     steps:
-      - name: Free disk space
-        # `ubuntu-latest` ships ~30GB of preinstalled toolchains (.NET, Android SDK,
-        # GHC, CodeQL, ...) we never use. The export/ toolchain (torch, diffusers,
-        # transformers, gradio) plus HuggingFace checkpoints downloaded fresh every
-        # run (ve.safetensors + s3gen.safetensors + t3_cfg.safetensors, the latter
-        # alone ~2GB) plus their exported .onnx artifacts (t3_decoder.onnx alone
-        # ~1.9GB) are enough to exhaust the runner's remaining disk mid-run — this
-        # reclaims headroom before any of that happens (standard GitHub Actions
-        # idiom for disk-constrained jobs).
-        run: |
-          sudo rm -rf /usr/share/dotnet
-          sudo rm -rf /usr/local/lib/android
-          sudo rm -rf /opt/ghc
-          sudo rm -rf /opt/hostedtoolcache/CodeQL
-          df -h /
-
       - uses: actions/checkout@v4
 
       - uses: dtolnay/rust-toolchain@stable
@@ -42,16 +31,18 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-          # No `cache: 'pip'`: the export/ toolchain (torch, diffusers, transformers,
-          # gradio, ...) plus the exported .onnx files and HuggingFace checkpoints
-          # written during parity-check tests fill the runner's ephemeral disk enough
-          # that the post-job pip-cache-save step fails with "No space left on
-          # device" (non-fatal to the gate itself, but noisy). Not worth chasing —
-          # this install isn't the slow part of the job.
+          # No `cache: 'pip'`: see parity.yml's "Free disk space" step comment —
+          # same disk-tight-runner reasoning applies to this job's pip install too.
 
       - name: Install Python export/ dependencies
         run: pip install -r export/requirements.txt
 
       # ── The actual gate ──────────────────────────────────────────────────────
-      - name: Run make check
-        run: make check
+      - name: fmt + clippy + Rust tests
+        run: |
+          make fmt-check
+          make clippy
+          make test-rs
+
+      - name: Python tests (no checkpoint download)
+        run: make test-py-fast

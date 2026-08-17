@@ -6,6 +6,46 @@
 
 ---
 
+## 2026-08-17 — ci: split CI into fast + parity workflows, fix `check_t3` OOM
+
+**What changed**: VAI-004's `check_t3` (previous entry) OOM-killed CI (`Killed`, exit 143):
+the ~2GB PyTorch T3 model, the in-memory ~1.9GB ONNX protobuf built during export, and a
+loaded ~1.9GB `onnxruntime` session on the same graph could all be resident at once. Fixed
+at the source: `check_t3` now extracts the (tiny) reference greedy-decode outputs, then
+explicitly frees the torch model (`del t3`, `_common.load_t3.cache_clear()`, `gc.collect()`)
+*before* loading the ONNX Runtime sessions for the second half of the comparison.
+
+Separately, split `.github/workflows/ci.yml` (previously the single "mirrors `make check`
+exactly" job, per ADR-0001) into two workflows on the **same triggers as before** (every
+push/PR to `main` — no schedule, no path filter): `ci.yml` now runs only the fast,
+fully-offline checks (fmt/clippy/`cargo test`/`pytest -m "not parity"`), and new
+`parity.yml` runs the 5 tests that download a real HuggingFace checkpoint and validate
+ONNX-vs-PyTorch numerical parity (`pytest -m parity`, keeping the disk-space-reclaim step
+from the earlier CI-hang fix). New `export/pytest.ini` registers the `parity` marker; new
+`Makefile` targets `test-py-fast`/`test-py-parity` mirror the split. Local `make
+check`/`test-py` are unchanged and still run everything. See ADR-0006.
+
+**Why**: The parity checks are a hard project constraint (`CLAUDE.md` §1 — no exported
+component ships until `parity_check.py` confirms numerical parity), so they can't be
+skipped or deferred to a schedule; but coupling them to the same fast per-commit job as
+lint/unit-tests means one growing multi-GB checkpoint (T3's is 2GB, the largest by far)
+drags down a signal every contributor wants fast. Splitting into two jobs on identical
+triggers preserves exactly the same enforcement while isolating each job's resourcing.
+
+**What was rejected**: A scheduled (nightly/weekly) or `workflow_dispatch`-only parity
+trigger — explicitly rejected by the repo owner ("everything should be cause and effect");
+would also mean a broken export could land on `main` without the hard parity constraint
+being checked on that commit at all. A path-filtered trigger (`export/**`/
+`crates/vocalai-core/src/**` only) — reasonable, documented as a fallback in ADR-0006 if
+checkpoint growth later makes every-commit parity runs impractical, but not adopted now to
+keep the "runs on every commit, same as before" property simple and legible.
+
+**What's next**: Milestone 5 — export PerthNet, wire watermarking into output
+(`docs/issues.md` `VAI-005`); mark its parity test `@pytest.mark.parity` in the same
+commit, per ADR-0006's new commitment.
+
+---
+
 ## 2026-08-17 — VAI-004: Export T3 as decoder-with-past, implement KV-cache decode loop + sampling
 
 **What changed**: Added `export/export_t3.py`, which exports T3's Llama-style backbone as two ONNX
