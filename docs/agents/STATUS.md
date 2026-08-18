@@ -78,7 +78,7 @@ The next logical work, in priority order. Update at the end of every session.
 
 | Date | Ticket | Summary | Commit |
 |------|--------|---------|--------|
-| 2026-08-18 | VAI-005 | Export PerthNet encoder; implement STFT/ISTFT/resample watermarking pipeline (`watermark.rs`); pin `setuptools<81` (real fix for a `pkg_resources` removal breaking `resemble-perth`) | _pending_ |
+| 2026-08-18 | VAI-005 | Export PerthNet encoder; implement STFT/ISTFT/resample watermarking pipeline (`watermark.rs`); pin `setuptools<81` (real fix for a `pkg_resources` removal breaking `resemble-perth`) | `91c92ea` |
 | 2026-08-18 | — | Add ADR-0008 resolving PerthNet/Chatterbox license question (both MIT) | `1f29052` |
 | 2026-08-18 | — | Exclude T3 parity from CI, `heavy_build` marker (ADR-0007) — the ~9GB export-time memory is a real resource ceiling, not what the `d536fac` fix (below) addressed | `98e549b` |
 | 2026-08-17 | — | Split CI into fast + parity workflows (ADR-0006); fix `check_t3` OOM | `d536fac` |
