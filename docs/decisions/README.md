@@ -63,6 +63,10 @@ What becomes easier? What becomes harder? What new commitments does this create?
 | [0002](0002-onnx-plus-rust-runtime.md) | Export to ONNX and re-drive the loops from native Rust | Accepted |
 | [0003](0003-rust-over-cpp.md) | Rust for the native runtime (evaluated against C++) | Accepted |
 | [0004](0004-s3gen-euler-loop-generic-over-estimator-call.md) | S3Gen's Euler ODE loop is generic over the estimator call, not `ort`-coupled | Accepted |
+| [0005](0005-t3-hand-rolled-decoder-export.md) | T3 exported as a hand-rolled decoder-with-past | Accepted |
+| [0006](0006-split-ci-into-fast-and-parity-workflows.md) | Split CI into fast + parity workflows | Accepted |
+| [0007](0007-exclude-t3-parity-from-ci.md) | Exclude T3's parity check from CI; run it locally instead | Accepted |
+| [0008](0008-third-party-license-attribution.md) | Third-party license attribution for bundled ML assets (PerthNet + Chatterbox, both MIT) | Accepted |
 
 *Add new rows as ADRs accumulate.*
 
