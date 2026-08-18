@@ -51,7 +51,9 @@ checked for both ONNX-vs-eager match and padding invariance) and CAMPPlus
 (`check_campplus`, single fixed 400-frame graph) — these download the Chatterbox checkpoint from
 HuggingFace on first run (PerthNet's weights ship inside the `resemble-perth` package itself, no
 download needed) and require `export/requirements.txt` installed, see `docs/dev-setup.md`).
-`make check` passes cleanly. No placeholder/ignored tests remain.
+`make check` passes cleanly — verified on both POSIX and Windows/MSVC as of 2026-08-18 (see
+ADR-0010 for the two Windows-only breakages that were fixed: a `tokenizers`/`esaxx-rs` static-CRT
+link mismatch, and a non-portable `test-py` recipe). No placeholder/ignored tests remain.
 
 **Residual risk (VAI-005)**: `watermark.rs`'s STFT/ISTFT/resample math has no PyTorch-reference
 parity check — classical DSP isn't ONNX-exported, so `CLAUDE.md` §1's hard constraint doesn't gate
@@ -115,6 +117,7 @@ The next logical work, in priority order. Update at the end of every session.
 
 | Date | Ticket | Summary | Commit |
 |------|--------|---------|--------|
+| 2026-08-18 | — | Fix `make check` on Windows/MSVC (ADR-0010): drop `tokenizers`' static-CRT `esaxx_fast` to resolve the `LNK2038` CRT mismatch; make the `test-py*` Makefile recipes `cmd.exe`-portable via `$(OS)`/`$(wildcard)` | _pending_ |
 | 2026-08-18 | VAI-009 | Fix two trace-baking bugs in `export_hifigan.py` so `speech_feat` is a genuine dynamic ONNX axis; extend `check_hifigan` to 3 frame counts — unblocks VAI-006 part B.1's end-to-end acceptance criterion | `9ff4b4e` |
 | 2026-08-18 | VAI-008 | Export S3Gen's flow-encoder (bucketed, ADR-0009) + CAMPPlus (fixed 400-frame window) to ONNX, closing the `mu`/`spks` gap found while starting Milestone 6 | `65b1642` |
 | 2026-08-18 | VAI-005 | Export PerthNet encoder; implement STFT/ISTFT/resample watermarking pipeline (`watermark.rs`); pin `setuptools<81` (real fix for a `pkg_resources` removal breaking `resemble-perth`) | `91c92ea` |

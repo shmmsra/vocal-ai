@@ -135,6 +135,10 @@ venv **does** need to exist and have `requirements.txt` installed (§2) for the 
 tests to pass rather than error on missing imports. If `make check` fails for any other reason
 on a clean clone, fix `docs/dev-setup.md` first — the install instructions above are wrong.
 
+> To actually run the app (generate speech to a WAV) rather than just pass the test gate, see
+> **§11 — Generate model artifacts + run the app** below. `make check` does *not* produce the
+> `models/` files the CLI needs.
+
 ---
 
 ## 7. Editor / IDE setup
@@ -180,5 +184,101 @@ If any of those steps fails, the local hooks are not installed correctly — re-
 | `cargo`/`pytest` not found | Toolchain not installed or not on `PATH` | Re-check §1/§2/§3 (Windows: §3 has `winget` commands) |
 | `cargo`/`make` still "not recognized" immediately after installing it (Windows) | The installer updated `PATH`, but the current shell's environment was cached before install | Open a new PowerShell/terminal window |
 | `pyenv install <version>` on Windows fails with `definition not found` for a version that exists on python.org | pyenv-win's local version cache is stale and `pyenv update` is broken on modern Windows | See the workaround in §2 (Python toolchain on Windows) |
+| `cargo test` / `make check` fails on Windows with `LNK2038: RuntimeLibrary mismatch (MD_DynamicRelease vs MT_StaticRelease)` | A transitive C++ dep compiled against a different CRT than ONNX Runtime's prebuilt | Already fixed in-repo (ADR-0010): `tokenizers` is pinned with `default-features = false` to drop the static-CRT `esaxx_fast` C++. If it recurs after a dep bump, re-check the new dep's default features for a `/MT` C++ build |
+| `make check` on Windows errors with `-x was unexpected at this time` or `'.venv' is not recognized` | An old Makefile recipe used POSIX-shell syntax / the POSIX venv path; `make` runs recipes through `cmd.exe` on Windows | Already fixed in-repo (ADR-0010): the `test-py*` recipes now OS-detect `.venv\Scripts\python.exe` and avoid shell conditionals. Pull latest `Makefile` |
+| `error: failed to load models from models: ...` when running `vocalai` | The `models/` directory hasn't been populated (its contents are git-ignored build artifacts, never committed) | Run the export scripts in §11 to generate them |
 
 *Add new rows as the team discovers recurring setup gotchas.*
+
+---
+
+## 11. Generate model artifacts + run the app (end-to-end)
+
+`make check` verifies the code but does **not** produce the model files the CLI loads. The
+`models/` directory holds ONNX graphs + `.npy` tensors that are dev-time build artifacts —
+git-ignored, never committed (see `CLAUDE.md` §1 hard constraints). You generate them once by
+running the `export/` scripts, which download the Chatterbox checkpoint from HuggingFace on first
+run (~1–2 GB, cached afterward) and require the `export/.venv` from §2.
+
+All scripts write to `<repo>/models/` regardless of the directory you run them from (the path is
+anchored to the repo root, not the current working directory). The commands below call the venv
+interpreter directly, so you don't need to activate the venv first.
+
+### 11.1 Generate the model files (one-time, for the default-voice path)
+
+These eight steps produce every file `vocalai` loads for default-voice synthesis:
+
+| Script | Produces |
+|--------|----------|
+| `fetch_tokenizer.py` | `tokenizer.json` (downloaded, not exported — no ONNX graph) |
+| `export_t3.py` | `t3_cond_prefill.onnx`, `t3_decoder.onnx`, `t3_speech_emb.npy`, `t3_speech_pos_emb.npy` |
+| `export_s3gen.py` | `s3gen_estimator.onnx` |
+| `export_s3gen_flow_encoder.py` | `s3gen_flow_encoder_{200,400,600,800,1000,1200}.onnx` (6 buckets) |
+| `export_hifigan.py` | `hifigan.onnx` |
+| `export_perthnet.py` | `perthnet_encoder.onnx` |
+| `export_campplus.py` | `s3gen_spk_embed_affine_weight.npy`, `s3gen_spk_embed_affine_bias.npy` (+ `campplus.onnx`) |
+| `export_default_voice.py` | `default_voice/*.npy` (6 conditioning tensors) |
+
+**macOS / Linux**:
+```bash
+PY=export/.venv/bin/python
+$PY export/fetch_tokenizer.py
+$PY export/export_t3.py
+$PY export/export_s3gen.py
+$PY export/export_s3gen_flow_encoder.py
+$PY export/export_hifigan.py
+$PY export/export_perthnet.py
+$PY export/export_campplus.py
+$PY export/export_default_voice.py
+```
+
+**Windows (PowerShell)**:
+```powershell
+$py = "export\.venv\Scripts\python.exe"
+& $py export\fetch_tokenizer.py
+& $py export\export_t3.py
+& $py export\export_s3gen.py
+& $py export\export_s3gen_flow_encoder.py
+& $py export\export_hifigan.py
+& $py export\export_perthnet.py
+& $py export\export_campplus.py
+& $py export\export_default_voice.py
+```
+
+> `export_ve.py` (`ve.onnx`) and `export_s3tokenizer.py` (`s3tokenizer.onnx`) are **not** needed
+> for default-voice synthesis — they're only used by the future `--voice` zero-shot cloning path
+> (Milestone 6 part B.2, not yet implemented). Skip them unless you're working on that path.
+
+### 11.2 Build the CLI
+
+```bash
+cargo build --release -p vocalai-cli
+```
+
+### 11.3 Synthesize speech
+
+**macOS / Linux**:
+```bash
+./target/release/vocalai --text "hello world" --out out.wav --models-dir models
+```
+
+**Windows (PowerShell)**:
+```powershell
+.\target\release\vocalai.exe --text "hello world" --out out.wav --models-dir models
+```
+
+Each run prints `Wrote out.wav` and exits 0. The output is a mono 24 kHz 16-bit PCM WAV
+(~0.9 s for "hello world") of audible, non-silent speech. Quick non-audio sanity check
+(reuse the venv interpreter from §11.1):
+
+```bash
+export/.venv/bin/python -c "import wave; w=wave.open('out.wav'); print(w.getnchannels(), w.getframerate(), w.getnframes())"
+```
+
+**Tuning flags** (all optional, defaults in parentheses): `--exaggeration` (0.5),
+`--cfg-weight` (0.5), `--temperature` (0.8), `--repetition-penalty` (1.2), `--min-p` (0.05),
+`--top-p` (1.0), `--max-new-tokens` (1000). `--voice <ref.wav>` is reserved for zero-shot cloning
+and currently errors out clearly (part B.2, not yet implemented).
+
+See `docs/manual-testing.md` → "CLI: default-voice end-to-end synthesis" for the full pass/fail
+criteria and known failure modes.

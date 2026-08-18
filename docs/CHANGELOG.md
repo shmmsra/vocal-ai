@@ -6,6 +6,48 @@
 
 ---
 
+## 2026-08-18 — Fix `make check` on Windows (MSVC CRT link mismatch + non-portable pytest recipe)
+
+**What changed**: two independent Windows-only breakages in the `make check` gate, neither
+of which reproduces on macOS/Linux (so CI stayed green and both were invisible until the gate
+was run on Windows). Full reasoning in [ADR-0010](decisions/0010-windows-build-and-make-portability.md).
+
+- **`crates/vocalai-core/Cargo.toml`** — `tokenizers` is now pulled with
+  `default-features = false, features = ["onig", "progressbar"]`, dropping the default
+  `esaxx_fast` feature. `esaxx_fast` enables `esaxx-rs/cpp`, whose `build.rs` hardcodes
+  `.static_crt(true)` and compiles its C++ against the static CRT (`/MT`); ONNX Runtime's
+  prebuilt (`ort`) and Rust std use the dynamic CRT (`/MD`), so the MSVC linker aborted with
+  `LNK2038: RuntimeLibrary mismatch (MD_DynamicRelease vs MT_StaticRelease)`. `esaxx_fast` is a
+  suffix-automaton used only to *train* Unigram tokenizers — never touched by inference-time
+  tokenizer loading/encoding — so dropping it changes no runtime behavior. Applied on all
+  platforms, not just Windows, since the C++ path is unused everywhere.
+- **`Makefile`** — the `test-py*` recipes no longer use a POSIX-shell conditional
+  (`if [ -x .venv/bin/python ]; then ...; fi`), which `cmd.exe` can't parse (`-x was unexpected
+  at this time`) since there's no `sh` on a stock Windows PATH. The interpreter path is now
+  chosen by `$(OS)` (`.venv\Scripts\python.exe` on Windows with backslashes for `cmd.exe`'s
+  leading-exe rule, `.venv/bin/python` elsewhere) and existence is probed with make's own
+  `$(wildcard)` instead of a shell test. Same "prefer venv else PATH pytest" behavior, now
+  valid under both `cmd.exe` and POSIX `sh`.
+
+**How this was verified**: ran the full `make check` on Windows 11 / MSVC after each fix.
+`cargo fmt` + `clippy` clean, `cargo test --workspace` links and passes all 53 Rust tests
+(previously failed at link), and `test-py` runs the export venv's interpreter and passes all
+12 Python parity tests (previously errored before pytest even started). Gate is fully green.
+
+**What was rejected** (see ADR-0010): forcing `+crt-static` globally (breaks `ort`'s
+dynamic-CRT prebuilt), patching/forking `esaxx-rs`, and `SHELL := bash` (the box's only bash is
+WSL, which can't run the Windows-native venv interpreter).
+
+**Also in this session — docs**: added `docs/dev-setup.md` §11 ("Generate model artifacts + run the
+app"), a single authoritative, cross-platform (macOS/Linux + Windows PowerShell) runbook mapping each
+`export/` script to the `models/` files it produces, plus the build and synthesis commands. Previously
+this was scattered across the per-milestone `docs/manual-testing.md` sections with no Windows commands,
+so running the app end-to-end required re-researching the export order every time. The
+manual-testing CLI section now points at §11 as the source of truth instead of duplicating it.
+
+**What's next**: if `tokenizers` is version-bumped, re-check its default feature list for a
+re-introduced C++/CRT-sensitive default.
+
 ## 2026-08-18 — VAI-009: fix dynamic-length HiFiGAN export, unblocking VAI-006's end-to-end acceptance criterion
 
 **What changed**: `export/export_hifigan.py`'s `speech_feat` input is now a genuine ONNX dynamic

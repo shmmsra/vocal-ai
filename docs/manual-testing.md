@@ -483,23 +483,20 @@ python parity_check.py --component hifigan
 ## CLI: default-voice end-to-end synthesis (VAI-006, part B.1)
 
 **Prerequisites**:
-- All Milestone 2/3/4/5/8 exports present in `models/` (`hifigan.onnx`, `ve.onnx` -- not used by
-  this path but harmless if absent is not true, see below --, `s3gen_estimator.onnx`,
-  `s3gen_flow_encoder_{200,400,600,800,1000,1200}.onnx`, `campplus.onnx` -- not used by this path
-  either --, `s3gen_spk_embed_affine_{weight,bias}.npy`, `t3_cond_prefill.onnx`, `t3_decoder.onnx`,
-  `t3_speech_emb.npy`, `t3_speech_pos_emb.npy`, `perthnet_encoder.onnx`, `models/default_voice/*.npy`
-  -- see VAI-008's manual-testing section above for how to produce all of these).
-- **`models/tokenizer.json`** -- not a model export (no ONNX graph, no parity check: it's already
-  the exact file format the Rust `tokenizers` crate reads directly). Staged by
-  `export/fetch_tokenizer.py`, which downloads it from `ResembleAI/chatterbox` on the HuggingFace
-  Hub and copies it to `models/tokenizer.json`:
-  ```bash
-  cd export && python fetch_tokenizer.py
-  ```
+- The full `models/` directory must be populated. **The single, authoritative, cross-platform
+  (macOS/Linux + Windows) command list for generating every required artifact — plus the build and
+  run commands — lives in `docs/dev-setup.md` §11.** Follow §11.1 (generate model files) once, then
+  §11.2 (build). Don't re-derive the export order from the per-milestone sections above.
+- For the record, `ModelBundle::load` (`crates/vocalai-core/src/pipeline.rs`) requires exactly:
+  `tokenizer.json`, `t3_cond_prefill.onnx`, `t3_decoder.onnx`, `t3_speech_emb.npy`,
+  `t3_speech_pos_emb.npy`, `s3gen_estimator.onnx`, `s3gen_flow_encoder_{200,400,600,800,1000,1200}.onnx`,
+  `hifigan.onnx`, `perthnet_encoder.onnx`, `s3gen_spk_embed_affine_{weight,bias}.npy`, and
+  `default_voice/*.npy`. It does **not** load `ve.onnx`, `s3tokenizer.onnx`, or `campplus.onnx` —
+  those are for the future `--voice` cloning path (part B.2).
 
-**Test command(s)**:
+**Test command(s)** (see `docs/dev-setup.md` §11 for the full per-platform export list this assumes
+is already done; `--out /tmp/out.wav` shown for POSIX, use `--out out.wav` on Windows):
 ```bash
-cd export && python fetch_tokenizer.py && cd ..   # stages models/tokenizer.json, see prerequisites
 cargo build --release -p vocalai-cli
 ./target/release/vocalai --text "hello world" --out /tmp/out.wav --models-dir models
 ```
@@ -539,6 +536,35 @@ generalizes across frame counts rather than coincidentally matching one:
   fix -- see the "ONNX export + parity check: dynamic-length HiFiGAN (VAI-009)" section above.
 - Silence (all-zero samples) or clipped-flat output: a real bug in the T3/S3Gen/HiFiGAN/watermark
   wiring -- investigate `pipeline::synthesize`'s tensor assembly.
+
+---
+
+### Cross-platform build gate: `make check` on Windows (ADR-0010)
+
+**Test command(s)** (from repo root):
+
+```bash
+make check
+```
+
+**Setup**:
+- Rust toolchain (`cargo`), GNU `make`, and the `export/.venv` all installed per `docs/dev-setup.md`.
+- On Windows, run from a shell whose PATH already includes `cargo` and `make` (open a *new* shell
+  after installing them — see §10). No `sh`/Git Bash is required; the recipes run under `cmd.exe`.
+
+**What to observe**:
+- `cargo test --workspace` **links and runs** — it does not abort at the MSVC linker.
+- The `test-py` step launches the export venv interpreter and runs pytest.
+
+**Pass criteria**:
+- `fmt-check` + `clippy` clean, all Rust tests pass, all Python tests pass; `make check` exits 0.
+
+**Fail indicators**:
+- `LNK2038: mismatch detected for 'RuntimeLibrary' (MD_DynamicRelease vs MT_StaticRelease)`:
+  the `esaxx_fast`/static-CRT regression is back — confirm `crates/vocalai-core/Cargo.toml` still
+  pins `tokenizers` with `default-features = false` (no `esaxx_fast`). See ADR-0010.
+- `-x was unexpected at this time` or `'.venv' is not recognized`: the `test-py*` Makefile recipes
+  reverted to POSIX-shell syntax / forward-slash exe paths that `cmd.exe` can't run. See ADR-0010.
 
 ---
 

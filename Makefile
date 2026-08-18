@@ -15,6 +15,23 @@ help:
 	@echo "  make build         Build the project"
 	@echo "  make clean         Remove build artifacts"
 
+# ── Python interpreter selection ──────────────────────────────────────────────
+# The export venv lives at .venv/bin/python on POSIX, .venv/Scripts/python.exe on
+# Windows. Pick the right layout by OS, then prefer that interpreter if it exists
+# (checked with make's own $(wildcard) so no POSIX shell is required — Windows
+# runs recipes through cmd.exe, which can't parse `if [ -x ... ]; then ... fi`).
+ifeq ($(OS),Windows_NT)
+  # cmd.exe needs backslashes for the leading executable path; $(wildcard) needs
+  # forward slashes. Keep one of each.
+  VENV_PY := .venv\Scripts\python.exe
+  VENV_PY_GLOB := export/.venv/Scripts/python.exe
+else
+  VENV_PY := .venv/bin/python
+  VENV_PY_GLOB := export/.venv/bin/python
+endif
+
+PYTEST := $(if $(wildcard $(VENV_PY_GLOB)),$(VENV_PY) -m pytest,pytest)
+
 # ── Pre-commit gate ──────────────────────────────────────────────────────────
 
 check: fmt-check clippy test-rs test-py
@@ -39,24 +56,24 @@ test-rs:
 	cargo test --workspace
 
 test-py:
-	cd export && if [ -x .venv/bin/python ]; then .venv/bin/python -m pytest; else pytest; fi
+	cd export && $(PYTEST)
 
 # `-m "not parity"`/`-m parity` split the suite along the same line as
 # .github/workflows/ci.yml vs parity.yml — see export/pytest.ini for the marker
 # definition and docs/decisions/0006-split-ci-into-fast-and-parity-workflows.md
 # for why they're two separate jobs.
 test-py-fast:
-	cd export && if [ -x .venv/bin/python ]; then .venv/bin/python -m pytest -m "not parity"; else pytest -m "not parity"; fi
+	cd export && $(PYTEST) -m "not parity"
 
 test-py-parity:
-	cd export && if [ -x .venv/bin/python ]; then .venv/bin/python -m pytest -m parity; else pytest -m parity; fi
+	cd export && $(PYTEST) -m parity
 
 # What CI's parity.yml actually runs: same as test-py-parity minus `heavy_build`
 # tests (currently just T3 — its first-time ONNX export peaks at ~9GB, more than
 # a free-tier CI runner has; see docs/decisions/0007-exclude-t3-parity-from-ci.md).
 # `heavy_build` tests still run locally via plain `test-py-parity`/`check`.
 test-py-parity-ci:
-	cd export && if [ -x .venv/bin/python ]; then .venv/bin/python -m pytest -m "parity and not heavy_build"; else pytest -m "parity and not heavy_build"; fi
+	cd export && $(PYTEST) -m "parity and not heavy_build"
 
 test: test-rs test-py
 
