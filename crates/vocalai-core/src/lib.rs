@@ -4,3 +4,4 @@
 pub mod s3gen;
 pub mod session;
 pub mod t3;
+pub mod watermark;

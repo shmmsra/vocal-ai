@@ -6,6 +6,82 @@
 
 ---
 
+## 2026-08-18 — VAI-005: Export PerthNet encoder, implement STFT/ISTFT/resample watermarking (`watermark.rs`)
+
+**What changed**: `export/export_perthnet.py` exports `PerthNet.encoder` (the Conv1d
+residual-encoder submodule inside the `resemble-perth` package — the sole learned piece;
+`Encoder.forward` internally crops to the 128-bin `subband` below `max_wmark_freq=2000Hz`,
+applies the residual, and masks it, so the exported graph already does the full mask/residual
+logic, not just the raw conv stack) to `models/perthnet_encoder.onnx`
+(`export/parity_check.py::check_perthnet`, tight-tolerance synthetic-magspec parity, same
+pattern as `check_hifigan`/`check_ve` — satisfies `CLAUDE.md` §1's parity hard constraint for the
+one actual ONNX-exported piece). `export/_common.py` gained `load_perthnet()`.
+
+Loading PerthNet needed a real fix, not a workaround: `perth/perth_net/__init__.py` does
+`from pkg_resources import resource_filename` to locate its bundled checkpoint, and
+`setuptools>=81` has started dropping `pkg_resources` entirely (a real, in-progress upstream
+removal, not specific to this repo) — an unpinned `pip install setuptools` in this venv resolved
+to 84.0.0, which lacks it. `export/requirements.txt` now pins `setuptools<81`.
+
+`crates/vocalai-core/src/watermark.rs` (new) reimplements
+`PerthImplicitWatermarker.apply_watermark`: STFT (reflect-pad, Hann window, real FFT per frame via
+`realfft`, matching `torch.stft(center=True, pad_mode="reflect", normalized=False)`) → dB-scale
+log-magnitude normalize → the ONNX encoder call → denormalize → ISTFT (inverse real FFT per
+frame, Hann synthesis window, COLA-normalized overlap-add — the same recipe already proven
+correct in `export_hifigan.py`'s `_istft_onnx`, expressed with a real inverse FFT instead of a
+precomputed DFT matrix) → 24kHz↔32kHz resample (`rubato`, FFT-based synchronous resampler; the
+ratio is a simple 4/3). Structured like `s3gen.rs`/`t3.rs`: the DSP pipeline is generic over the
+encoder-step call, so it's unit-tested (7 tests: Hann-window values, reflect-pad convention,
+normalize/denormalize round-trip, a synthetic-signal STFT→ISTFT round trip, resample duration
+preservation, an identity-encoder end-to-end round trip, encoder-error propagation) without a
+live ONNX session; `run_encoder` provides the real `ort`-backed wiring.
+
+`stft_magphase` was manually spot-checked once (not a repeatable test) against a live
+`AudioProcessor.signal_to_magphase` call on a synthetic 220Hz tone: the signal-carrying bin
+matched to ~1e-7 across all frames. The only disagreements larger than float32 rounding were at
+near-silent bins (DC leakage, near-Nyquist), where different FFT implementations' summation order
+disagrees by orders of magnitude in *relative* terms after log compression while both sides are
+inaudibly close to zero in *absolute* terms — expected floating-point behavior, not a
+framing/windowing bug.
+
+**Why**: Milestone 5 (plan §7) — VAI-005. The licensing question that blocked this was already
+resolved by ADR-0008 (both `resemble-perth` and the Chatterbox weights are MIT).
+
+**What was rejected**: bit-exact resampler parity between `rubato` and librosa's default
+`soxr_hq` — classical DSP isn't ONNX-exported, so it isn't gated by `CLAUDE.md` §1's parity
+constraint the way the exported networks are; chasing that now, with no live CLI to listen to the
+result on yet (Milestone 6), would be effort spent on an unverifiable claim. Documented as an
+accepted residual risk (`docs/agents/STATUS.md`) instead of silently assumed away. Also rejected:
+hand-rolling the subband crop/mask/residual-add math in Rust — the exported `Encoder.forward`
+already does this internally, so re-deriving it in Rust would just be redundant, divergent logic.
+
+**What's next**: Milestone 6 — wire the full pipeline (tokenizer → T3 → S3Gen → HiFiGAN →
+watermark → WAV) in `vocalai-core`, plus the `clap` CLI in `vocalai-cli`. This is also the first
+point real end-to-end audio exists to manually verify the resampler-fidelity residual risk above.
+
+---
+
+## 2026-08-18 — docs: add ADR-0008 resolving PerthNet/Chatterbox license question (VAI-005)
+
+**What changed**: Verified `resemble-perth` (package + bundled weights) and
+`ResembleAI/chatterbox` (HuggingFace model card) are both MIT-licensed, closing the two open
+licensing questions plan §9 flagged for VAI-005. Recorded as ADR-0008, including a new
+commitment: Milestone 7's bundled release artifacts must ship a `THIRD_PARTY_LICENSES`/`NOTICE`
+file with both MIT notices, to satisfy MIT's copyright-notice-retention condition. Also backfilled
+the stale ADR index in `docs/decisions/README.md` (0005–0007 were missing).
+
+**Why**: `CLAUDE.md`'s universal rule requires an ADR for decisions another agent might wonder
+about; a licensing question blocking a ticket, resolved by direct verification rather than
+assumption, qualifies. Unblocks VAI-005 with no licensing gate.
+
+**What was rejected**: assuming a package's code license (MIT) automatically covers its model
+weights without checking the weights' own source — weights are often licensed separately from
+surrounding code in ML packages, so each was verified independently.
+
+**What's next**: VAI-005 itself (export PerthNet, wire watermarking into the output pipeline).
+
+---
+
 ## 2026-08-18 — ci: exclude T3's parity check from CI (still local-only), add `heavy_build` marker
 
 **What changed**: The previous entry's `check_t3` memory fix didn't actually fix CI — a

@@ -8,6 +8,8 @@ ort = { version = "=2.0.0-rc.13", features = ["ndarray"] }
 ndarray = "0.17"
 ndarray-npy = { version = "0.10", default-features = false }
 rand = "0.8"
+realfft = "3.5.0"
+rubato = "5.0.0"
 
 [features]
 default = []

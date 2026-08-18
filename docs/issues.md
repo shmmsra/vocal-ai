@@ -44,20 +44,6 @@ Tickets use the prefix `VAI-NNN`, numbered sequentially (e.g. `VAI-001`, `VAI-00
 
 ## Open Issues
 
-### VAI-005 · P2 · OPEN · Milestone 5
-**Export PerthNet; wire watermarking into output**
-
-**Acceptance criteria**:
-- [ ] PerthNet exported from external `resemble-perth` package
-- [ ] License confirmed to permit redistribution of exported weights
-- [ ] `crates/vocalai-core/src/watermark.rs` wires watermarking into the output pipeline
-- [ ] Parity check passes for PerthNet
-- [ ] Docs updated (CHANGELOG, STATUS, manual-testing)
-
-**Notes**: Depends on `VAI-004`. See `docs/phase1-onnx-rust-cli-plan.md` §7 Milestone 5 and §9 Open Items (external package, licensing).
-
----
-
 ### VAI-006 · P2 · OPEN · Milestone 6
 **Wire full pipeline in vocalai-core + clap CLI in vocalai-cli**
 
@@ -96,6 +82,7 @@ Tickets use the prefix `VAI-NNN`, numbered sequentially (e.g. `VAI-001`, `VAI-00
 
 | Date | Ticket | Title | Commit |
 |------|--------|-------|--------|
+| 2026-08-18 | VAI-005 | Export PerthNet encoder; implement STFT/ISTFT/resample watermarking pipeline in `watermark.rs` | _pending_ |
 | 2026-08-17 | VAI-004 | Export T3 as decoder-with-past (hand-rolled Llama, ADR-0005); implement KV-cache decode loop + sampling (greedy-decode parity, see notes) | `2e13c33` |
 | 2026-08-16 | VAI-003 | Export S3Gen flow estimator + Euler ODE loop, chain into HiFiGAN | `1bc9095` |
 | 2026-08-16 | VAI-002 | Export HiFiGAN/voice-encoder/S3-tokenizer to ONNX + `parity_check.py` | `820ff9a` |

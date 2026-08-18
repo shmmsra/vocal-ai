@@ -82,6 +82,29 @@ def load_t3(device: str = "cpu"):
     return t3
 
 
+@lru_cache(maxsize=None)
+def load_perthnet(device: str = "cpu"):
+    """Load the PerthNet (implicit) watermarker network bundled inside the
+    `resemble-perth` package itself (not a HuggingFace download like the other
+    loaders — see docs/decisions/0008-third-party-license-attribution.md).
+
+    `perth.PerthImplicitWatermarker()` (what `ChatterboxTTS.__init__` calls
+    unconditionally) needs `pkg_resources` (`perth/perth_net/__init__.py`) to
+    locate the prepackaged checkpoint directory; `setuptools>=81` dropped
+    `pkg_resources` entirely, which is the actual root cause of the import
+    error this module used to work around by skipping PerthNet — see
+    `export/requirements.txt`'s `setuptools<81` pin. With that pin in place,
+    load PerthNet directly (bypassing `PerthImplicitWatermarker`'s wrapper,
+    same rationale as the other loaders: we only need the underlying `nn.Module`).
+    """
+    from perth.perth_net import PREPACKAGED_MODELS_DIR
+    from perth.perth_net.perth_net_implicit.model.perth_net import PerthNet
+
+    perth_net = PerthNet.load("implicit", PREPACKAGED_MODELS_DIR)
+    perth_net.to(device).eval()
+    return perth_net
+
+
 def export_onnx(
     module: torch.nn.Module,
     example_inputs: tuple,

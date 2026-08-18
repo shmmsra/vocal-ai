@@ -1,5 +1,6 @@
 """Tests for export/_common.py's comparison helper and the ONNX exports (HiFiGAN,
-voice encoder, S3 tokenizer, S3Gen flow estimator) against their PyTorch references.
+voice encoder, S3 tokenizer, S3Gen flow estimator, T3, PerthNet) against their
+PyTorch references.
 
 The parity tests require the export toolchain (torch, chatterbox-tts, onnx,
 onnxruntime — see export/requirements.txt) and download the Chatterbox checkpoint
@@ -68,4 +69,10 @@ def test_s3gen_export_matches_pytorch_reference_mel_to_waveform():
 @pytest.mark.heavy_build
 def test_t3_export_matches_pytorch_reference_greedy_decode():
     result = parity_check.check_t3(ATOL, RTOL)
+    assert result.passed, f"max_abs_diff={result.max_abs_diff}"
+
+
+@pytest.mark.parity
+def test_perthnet_export_matches_pytorch_reference():
+    result = parity_check.check_perthnet(ATOL, RTOL)
     assert result.passed, f"max_abs_diff={result.max_abs_diff}"

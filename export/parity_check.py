@@ -1,7 +1,7 @@
 """Check numerical parity between exported ONNX graphs and the PyTorch reference.
 
 Usage:
-    python parity_check.py [--component hifigan|ve|s3tokenizer|s3gen] [--atol 1e-4] [--rtol 1e-3]
+    python parity_check.py [--component hifigan|ve|s3tokenizer|s3gen|t3|perthnet] [--atol 1e-4] [--rtol 1e-3]
 
 Exits non-zero if any checked component fails. Per docs/agents/CONVENTIONS.md §3: no
 exported component may be wired into vocalai-core until this passes for it.
@@ -22,11 +22,12 @@ from transformers.generation.logits_process import (
 )
 
 import export_hifigan
+import export_perthnet
 import export_s3gen
 import export_s3tokenizer
 import export_t3
 import export_ve
-from _common import allclose_report, load_s3gen, load_t3, models_dir
+from _common import allclose_report, load_perthnet, load_s3gen, load_t3, models_dir
 
 DEFAULT_ATOL = 1e-4
 DEFAULT_RTOL = 1e-3
@@ -194,6 +195,23 @@ def check_s3gen(atol: float, rtol: float) -> ParityResult:
     mel_passed, mel_diff = allclose_report(mel_ref, mel_onnx, atol, rtol)
     wav_passed, wav_diff = allclose_report(wav_ref, wav_onnx, atol, rtol)
     return ParityResult("s3gen", mel_passed and wav_passed, max(mel_diff, wav_diff))
+
+
+def check_perthnet(atol: float, rtol: float) -> ParityResult:
+    torch.manual_seed(0)
+    perth_net = load_perthnet()
+    onnx_path = models_dir() / "perthnet_encoder.onnx"
+    if not onnx_path.exists():
+        export_perthnet.export(onnx_path)
+
+    magspec = torch.randn(1, export_perthnet.NFREQ, 50)
+    with torch.no_grad():
+        torch_out, _mask = perth_net.encoder(magspec)
+    torch_out = torch_out.numpy()
+
+    (onnx_out,) = _run_onnx(onnx_path, {"magspec": magspec.numpy()})
+    passed, diff = allclose_report(torch_out, onnx_out, atol, rtol)
+    return ParityResult("perthnet", passed, diff)
 
 
 def _softmax_np(logits: np.ndarray) -> np.ndarray:
@@ -475,6 +493,7 @@ CHECKS = {
     "s3tokenizer": check_s3tokenizer,
     "s3gen": check_s3gen,
     "t3": check_t3,
+    "perthnet": check_perthnet,
 }
 
 

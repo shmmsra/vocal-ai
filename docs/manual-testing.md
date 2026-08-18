@@ -304,4 +304,67 @@ speaker embedding / cond-prompt tokens / emotion value), matching the pattern `c
 
 ---
 
+## ONNX export + parity check: PerthNet watermark encoder (Milestone 5)
+
+**Test command(s)**:
+```bash
+cd export
+source .venv/bin/activate  # if not already active — see docs/dev-setup.md §2
+
+python export_perthnet.py
+python parity_check.py --component perthnet
+```
+
+**Setup**: Same venv as prior milestones, plus `resemble-perth==1.0.1` and `setuptools<81`
+(pinned in `export/requirements.txt` — `setuptools>=81` dropped `pkg_resources`, which
+`resemble-perth` needs to locate its bundled checkpoint; without the pin, `perth.PerthImplicitWatermarker`
+silently becomes `None` and any real use of it raises `TypeError: 'NoneType' object is not
+callable`). No download needed — PerthNet's weights ship inside the `resemble-perth` package
+itself (`perth/perth_net/pretrained/implicit/perth_net_250000.pth.tar`), unlike VE/S3Gen/T3, which
+pull from `ResembleAI/chatterbox` on HuggingFace.
+
+**What to observe**:
+- `export_perthnet.py` prints one `Exported PerthNet encoder to ...` line with no traceback,
+  producing `models/perthnet_encoder.onnx`.
+- `parity_check.py --component perthnet` prints one `[PASS]`/`[FAIL]` line with `max_abs_diff`.
+
+**Pass criteria**:
+- `export_perthnet.py` exits 0 and produces `models/perthnet_encoder.onnx`.
+- `parity_check.py --component perthnet` exits 0 and prints `[PASS] perthnet: max_abs_diff=...`
+  (expect an order of `1e-5`–`1e-6`, similar to `hifigan`/`ve`) — the exported graph is
+  `PerthNet.encoder`'s full `Encoder.forward` (subband crop, Conv1d residual stack, magnitude-mask,
+  residual-add all included), so this one check covers the entire learned/exported piece.
+- `python -m pytest` in `export/` (or `make check` from the repo root) passes
+  `export/tests/test_parity_check.py::test_perthnet_export_matches_pytorch_reference`.
+- `cargo test -p vocalai-core watermark::` passes all 7 tests — pure DSP math tests (Hann-window
+  values, reflect-pad convention, dB normalize/denormalize round-trip, a synthetic-signal
+  STFT→ISTFT round trip, resample duration preservation, an identity-encoder end-to-end
+  `apply_watermark` round trip, encoder-error propagation) — these run offline, no `models/`
+  directory or ONNX Runtime session required.
+
+**Known gap — no live audio to listen to yet**: unlike HiFiGAN/S3Gen, this module has no
+end-to-end "does it sound right" check available yet — `vocalai-cli` is still a placeholder
+(Milestone 6 wires the real pipeline). `watermark.rs`'s STFT/ISTFT/resample math also has no
+PyTorch-reference parity check the way the exported networks do (classical DSP isn't
+ONNX-exported, so `CLAUDE.md` §1's constraint doesn't gate it) — correctness rests on the Rust
+round-trip unit tests above, plus a one-time manual spot-check of `stft_magphase` against a live
+`AudioProcessor.signal_to_magphase` call (documented in `watermark.rs`'s module doc comment: the
+signal-carrying frequency bin matched to ~1e-7). `rubato`'s resampler is not bit-exact with
+librosa's default `soxr_hq` — this is an accepted, documented residual risk (see
+`docs/agents/STATUS.md`), to be revisited once Milestone 6 produces real audio to listen to.
+
+**Fail indicators**:
+- Any `[FAIL]` line, or `max_abs_diff` far above `1e-4`/`1e-3` (atol/rtol) — check whether
+  `PerthEncoderWrapper` (`export/export_perthnet.py`) still matches `PerthNet.encoder`'s actual
+  submodule (subband/hidden-size mismatch would show up as a shape error at export time, not a
+  numerical parity failure).
+- A `watermark::` Rust test failure indicates an actual DSP bug (windowing, frame/hop arithmetic,
+  dB normalization, or overlap-add/COLA math) — these tests never touch ONNX Runtime.
+- If `load_perthnet()` (`export/_common.py`) raises `TypeError: 'NoneType' object is not
+  callable` or an `ImportError` mentioning `pkg_resources`, check `setuptools<81` is actually
+  installed in the active venv (`pip show setuptools`) — a stale venv or a broadened pin is the
+  likely cause, not a code regression.
+
+---
+
 *Add new sections below this line as features land. Group by feature area (e.g. CLI, export pipeline, EP selection, voice cloning).*
