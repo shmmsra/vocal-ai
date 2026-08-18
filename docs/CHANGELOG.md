@@ -6,6 +6,84 @@
 
 ---
 
+## 2026-08-18 — VAI-006, part B.2: `--voice` zero-shot cloning
+
+**What changed**: wired `--voice` zero-shot voice cloning into the pipeline, closing VAI-006's last
+open item. All three ONNX networks this needed (voice encoder, S3 tokenizer, CAMPPlus) were already
+exported and parity-checked in earlier milestones (Milestone 2, VAI-008) — this was purely
+host-side DSP/wiring work, no new export step. Full reasoning in
+[ADR-0011](decisions/0011-voice-cloning-dsp-front-ends-hand-rolled-not-parity-checked.md).
+
+- **`crates/vocalai-core/src/mel.rs`** (new) — four mel/fbank "flavors" ported from four different
+  Python modules: the voice encoder's unscaled power-mel (`ve_mel_spectrogram`), the S3-tokenizer's
+  Whisper-style log-mel (`whisper_log_mel`, shared by T3's cond-prompt tokens and S3Gen's prompt
+  token), S3Gen's natural-log 24kHz mel (`s3gen_log_mel`), and CAMPPlus's Kaldi-style log-fbank
+  (`kaldi_fbank`, Povey window + preemphasis + snip-edges framing). Plus the shared
+  `slaney_mel_filterbank`/`kaldi_mel_filterbank` filterbank builders.
+- **`crates/vocalai-core/src/voice_encoder.rs`** (new) — `librosa.effects.trim`'s frame-RMS silence
+  trim, the overlapping partial-utterance windowing (`get_frame_step`/`get_num_wins`/
+  `stride_as_partials`), and `ve.onnx` wiring to produce T3's speaker embedding.
+- **`crates/vocalai-core/src/s3tokenizer.rs`** (new) — wraps `s3tokenizer.onnx`; discovered its
+  `code` output is traced as int32 (not int64, despite `mel_len`'s int64 input dtype) via a runtime
+  extraction error, confirmed against the ONNX graph's own declared output types.
+- **`crates/vocalai-core/src/campplus.rs`** (new) — Kaldi-fbank extraction, per-utterance mean
+  subtraction, and the trim-or-cyclically-repeat-to-400-frames windowing ADR-0009 already mandated
+  (never zero-pad — would corrupt CAMPPlus's internal statistics pooling).
+- **`crates/vocalai-core/src/audio.rs`** — added `read_wav` (mono `f32`, arbitrary bit depth,
+  multi-channel downmix by averaging) and a `Result`-returning, arbitrary-sample-rate-pair
+  `resample` (kept separate from `watermark.rs`'s fixed-ratio/`.expect()`-based twin — different
+  error contract, accepted small duplication).
+- **`crates/vocalai-core/src/pipeline.rs`** — `DefaultVoice` renamed `VoiceConditioning`, gains
+  `from_reference(bundle, wav_path)` alongside the existing `load_default(dir)`; both produce the
+  same six-tensor shape so `synthesize`'s T3/S3Gen wiring is unchanged downstream of voice
+  selection. `ModelBundle` lazily loads `ve`/`s3tokenizer`/`campplus` sessions on first `--voice`
+  use, so the default-voice-only path pays no extra load cost. `PipelineError` gains `Audio`/
+  `Resample` variants; the old `VoiceCloningNotImplemented` variant is gone.
+- **`crates/vocalai-core/src/s3gen.rs`**/**`t3.rs`** — added `S3GEN_SR`/`SPEECH_COND_PROMPT_LEN`
+  constants (previously only implicit in the default-voice `.npy` dump) for the new preprocessing
+  code to reference.
+- **`crates/vocalai-cli/src/main.rs`** — doc-comment only; `--voice` was already a wired-up flag.
+
+**What was rejected** (see ADR-0011 for full reasoning): an automated `parity_check.py`-style gate
+for the new DSP (disproportionate machinery for classical signal processing with no ONNX graph to
+diff against — same treatment already given to `watermark.rs`'s STFT/ISTFT/resample and CAMPPlus's
+fbank input); sharing `hann_window`/`reflect_pad` between `watermark.rs` and `mel.rs` (small,
+independently-documented duplication preferred over cross-module coupling); a single generic
+mel-spectrogram function covering all four flavors (they differ in too many dimensions for a shared
+signature to be simpler than four small functions).
+
+**A real bug shipped in the first pass and was caught by the repo owner's manual test, not by CI or
+unit tests**: `synthesize`'s token-assembly step (`pipeline.rs`) read the S3Gen prompt-token
+*values* from `bundle.default_voice.s3gen_prompt_token` unconditionally — a leftover from the
+`DefaultVoice` → `VoiceConditioning` rename's mechanical find-replace, which only matched
+single-line `bundle.default_voice.<field>` occurrences and missed this one because it spanned
+multiple lines. `prompt_token_len` (used for bucket/slice-length arithmetic) was correctly read
+from the *cloned* voice, but the token values themselves silently came from the *default* voice —
+a length/data mismatch that only surfaced as a panic
+(`prompt_feat's 500 frames exceed total_mel_len=416` in `s3gen::build_cond`) when the two
+diverged enough. My own pre-commit end-to-end check used a reference clip
+(`tmp/out.wav`, itself default-voice output) short enough that the mismatch happened not to trip
+the assert, so it passed without exposing the bug — the repo owner's test, using a different
+(real, longer) reference clip, did trip it. Fixed by reading `voice.s3gen_prompt_token` instead of
+`bundle.default_voice.s3gen_prompt_token`.
+
+**How this was verified**: `make check` (fmt, clippy, 76 Rust unit tests including numeric
+spot-checks against real librosa/torchaudio output on synthetic tones, 12 Python parity tests) is
+clean. End-to-end, after the fix above: `vocalai --text "This is a voice cloning test." --voice
+tmp/sample-voice-1.wav --out tmp/cloned.wav --models-dir models` produced a 52800-frame (~2.2s)
+mono 24kHz WAV, peak amplitude 32767/32767, RMS ~3937 — genuine non-silent audio. The default-voice
+command was re-run immediately after with no regression. Audible confirmation that the cloned
+voice actually resembles the reference speaker is still the repo owner's to make (see
+`docs/manual-testing.md`'s new section) — not yet done as of this entry.
+
+**Residual risk**: the new DSP (mel.rs, voice_encoder.rs's trim/striding) has no automated
+cross-language parity gate — see ADR-0011. Tracked alongside the existing watermark-resampler
+(VAI-005) and CAMPPlus-fbank-input (ADR-0009) residual risks.
+
+**What's next**: VAI-006 is fully closed. Milestone 7 (per-platform packaging) is next —
+`docs/agents/STATUS.md`'s "Deferred" section already flags T3's ~9GB export-time memory as a real
+resourcing question for that milestone's build pipeline.
+
 ## 2026-08-18 — Fix `make check` on Windows (MSVC CRT link mismatch + non-portable pytest recipe)
 
 **What changed**: two independent Windows-only breakages in the `make check` gate, neither

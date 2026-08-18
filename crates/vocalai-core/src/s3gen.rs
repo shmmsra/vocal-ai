@@ -28,6 +28,12 @@ use ort::value::Tensor;
 use rand::Rng;
 use rand_distr::StandardNormal;
 
+/// `S3GEN_SR` (`chatterbox/models/s3gen/const.py`) -- S3Gen's mel/output
+/// sample rate. Reused by `pipeline.rs`'s `--voice` reference-audio
+/// preprocessing (Milestone 6, part B.2) wherever the Python reference resamples
+/// to this rate.
+pub const S3GEN_SR: u32 = 24_000;
+
 /// Fixed-step count for the Euler solver. The base (non-meanflow) Chatterbox
 /// config never overrides this — `s3gen.inference()` calls `flow_inference()`
 /// with no `n_cfm_timesteps` argument (see `chatterbox/tts.py::generate`).

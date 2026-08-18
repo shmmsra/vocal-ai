@@ -4,31 +4,41 @@
 //! math of its own beyond simple tensor assembly already covered by each module's
 //! own unit tests.
 //!
-//! Milestone 6, part B.1 (`docs/issues.md` VAI-006): the *default voice* path only
-//! -- `models/default_voice/*.npy` (VAI-008's `export_default_voice.py`) already
+//! Milestone 6, part B.1 (`docs/issues.md` VAI-006): the *default voice* path --
+//! `models/default_voice/*.npy` (VAI-008's `export_default_voice.py`) already
 //! contains everything T3/S3Gen need for conditioning, so this path needs no voice
-//! encoder / S3-tokenizer / CAMPPlus / mel-extraction machinery at all. `--voice`
-//! zero-shot cloning is part B.2 (not yet implemented) -- [`synthesize`] returns
-//! [`PipelineError::VoiceCloningNotImplemented`] if a voice path is given.
+//! encoder / S3-tokenizer / CAMPPlus / mel-extraction machinery at all.
+//!
+//! Part B.2 adds `--voice` zero-shot cloning ([`VoiceConditioning::from_reference`]),
+//! reimplementing `ChatterboxTTS.prepare_conditionals` + `S3Gen.embed_ref`
+//! (`chatterbox/tts.py`, `chatterbox/models/s3gen/s3gen.py`) against the voice
+//! encoder / S3-tokenizer / CAMPPlus ONNX sessions (all already exported and
+//! parity-checked -- Milestones 2 and VAI-008) plus `mel.rs`'s hand-rolled DSP
+//! front ends. Both voice paths produce the same [`VoiceConditioning`] shape, so
+//! [`synthesize`]'s T3/S3Gen wiring downstream of voice selection is unchanged
+//! from B.1.
 //!
 //! See docs/phase1-onnx-rust-cli-plan.md §4/§7 (Milestone 6).
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use ndarray::{Array1, Array2, Array3};
+use ndarray::{Array1, Array2, Array3, Axis};
 use ort::session::Session;
 use rand::Rng;
 
-use crate::{s3gen, session, t3, tokenizer, watermark};
+use crate::{
+    audio, campplus, mel, s3gen, s3tokenizer, session, t3, tokenizer, voice_encoder, watermark,
+};
 
 /// Sampling/conditioning knobs, matching `ChatterboxTTS.generate()`'s CLI-exposed
 /// parameters (plan §3).
 #[derive(Clone, Debug)]
 pub struct SynthesisParams {
     pub text: String,
-    /// Reference-audio path for zero-shot cloning. `Some` is B.2 scope --
-    /// [`synthesize`] errors out rather than silently using the default voice.
+    /// Reference-audio (WAV) path for zero-shot voice cloning
+    /// ([`VoiceConditioning::from_reference`]); `None` uses the built-in
+    /// default voice.
     pub voice: Option<PathBuf>,
     pub exaggeration: f32,
     pub cfg_weight: f32,
@@ -44,9 +54,10 @@ pub enum PipelineError {
     Session(ort::Error),
     Npy(ndarray_npy::ReadNpyError),
     Tokenizer(Box<dyn std::error::Error + Send + Sync>),
-    /// `--voice` was given but zero-shot cloning (Milestone 6, part B.2) isn't
-    /// implemented yet.
-    VoiceCloningNotImplemented,
+    /// Failed to read a `--voice` reference WAV file.
+    Audio(hound::Error),
+    /// Failed to resample reference audio (`--voice`) to a rate a model expects.
+    Resample(audio::ResampleError),
     /// T3's decode loop produced no speech tokens after filtering (an immediate
     /// EOS) -- nothing to synthesize.
     NoSpeechGenerated,
@@ -58,10 +69,10 @@ impl std::fmt::Display for PipelineError {
             PipelineError::Session(e) => write!(f, "ONNX Runtime session error: {e}"),
             PipelineError::Npy(e) => write!(f, "failed to load a .npy model weight: {e}"),
             PipelineError::Tokenizer(e) => write!(f, "text tokenizer error: {e}"),
-            PipelineError::VoiceCloningNotImplemented => write!(
-                f,
-                "--voice zero-shot cloning is not yet implemented (Milestone 6, part B.2) -- omit --voice to use the built-in default voice"
-            ),
+            PipelineError::Audio(e) => write!(f, "failed to read --voice reference audio: {e}"),
+            PipelineError::Resample(e) => {
+                write!(f, "failed to resample --voice reference audio: {e}")
+            }
             PipelineError::NoSpeechGenerated => {
                 write!(f, "T3 generated no speech tokens for this text")
             }
@@ -83,10 +94,24 @@ impl From<ndarray_npy::ReadNpyError> for PipelineError {
     }
 }
 
-/// The built-in default voice's conditioning tensors, dumped from `conds.pt` by
-/// `export/export_default_voice.py` (VAI-008) -- see that script's module doc for
-/// field provenance.
-pub struct DefaultVoice {
+impl From<hound::Error> for PipelineError {
+    fn from(e: hound::Error) -> Self {
+        PipelineError::Audio(e)
+    }
+}
+
+impl From<audio::ResampleError> for PipelineError {
+    fn from(e: audio::ResampleError) -> Self {
+        PipelineError::Resample(e)
+    }
+}
+
+/// The conditioning tensors T3/S3Gen need, either loaded from the built-in
+/// default voice ([`VoiceConditioning::load_default`], dumped from `conds.pt` by
+/// `export/export_default_voice.py`, VAI-008) or computed live from a `--voice`
+/// reference wav ([`VoiceConditioning::from_reference`], Milestone 6 part B.2).
+#[derive(Clone)]
+pub struct VoiceConditioning {
     pub t3_speaker_emb: Array2<f32>,
     pub t3_cond_prompt_speech_tokens: Array2<i64>,
     pub s3gen_prompt_token: Array2<i64>,
@@ -95,8 +120,21 @@ pub struct DefaultVoice {
     pub s3gen_embedding: Array2<f32>,
 }
 
-impl DefaultVoice {
-    fn load(dir: &Path) -> Result<Self, PipelineError> {
+/// `S3_SR` (`chatterbox/models/s3tokenizer/s3tokenizer.py`) -- see
+/// `s3tokenizer::S3_SR`'s doc for provenance; re-exported as a `usize` here for
+/// the sample-count arithmetic below.
+const S3_SR: usize = s3tokenizer::S3_SR as usize;
+/// `S3GEN_SR` -- see `s3gen::S3GEN_SR`'s doc for provenance.
+const S3GEN_SR: usize = s3gen::S3GEN_SR as usize;
+/// `ChatterboxTTS.ENC_COND_LEN` (`chatterbox/tts.py`): T3's cond-prompt tokens
+/// are computed from at most the first 6s of the (full-length) 16kHz resample.
+const ENC_COND_LEN: usize = 6 * S3_SR;
+/// `ChatterboxTTS.DEC_COND_LEN`: S3Gen's conditioning is computed from at most
+/// the first 10s of the 24kHz reference.
+const DEC_COND_LEN: usize = 10 * S3GEN_SR;
+
+impl VoiceConditioning {
+    fn load_default(dir: &Path) -> Result<Self, PipelineError> {
         Ok(Self {
             t3_speaker_emb: ndarray_npy::read_npy(dir.join("t3_speaker_emb.npy"))?,
             t3_cond_prompt_speech_tokens: ndarray_npy::read_npy(
@@ -106,6 +144,78 @@ impl DefaultVoice {
             s3gen_prompt_token_len: ndarray_npy::read_npy(dir.join("s3gen_prompt_token_len.npy"))?,
             s3gen_prompt_feat: ndarray_npy::read_npy(dir.join("s3gen_prompt_feat.npy"))?,
             s3gen_embedding: ndarray_npy::read_npy(dir.join("s3gen_embedding.npy"))?,
+        })
+    }
+
+    /// Zero-shot voice cloning: builds the same conditioning tensors
+    /// [`load_default`] loads from disk, but computed live from `wav_path`.
+    /// Matches `ChatterboxTTS.prepare_conditionals` + `S3Gen.embed_ref`
+    /// (`chatterbox/tts.py`, `chatterbox/models/s3gen/s3gen.py`) exactly:
+    /// - `t3_speaker_emb`: the voice encoder's embedding of the *full-length*
+    ///   16kHz resample (never truncated -- `embeds_from_wavs` runs on the
+    ///   whole clip).
+    /// - `t3_cond_prompt_speech_tokens`: the S3-tokenizer's tokens for at most
+    ///   [`ENC_COND_LEN`] samples of that same 16kHz resample, truncated to
+    ///   `speech_cond_prompt_len` (150) tokens.
+    /// - `s3gen_prompt_feat`: S3Gen's own 24kHz mel of at most [`DEC_COND_LEN`]
+    ///   samples of the reference.
+    /// - `s3gen_prompt_token`/`s3gen_embedding`: the S3-tokenizer/CAMPPlus
+    ///   outputs for that same (truncated-to-10s) clip resampled to 16kHz.
+    fn from_reference(bundle: &mut ModelBundle, wav_path: &Path) -> Result<Self, PipelineError> {
+        let (native_samples, native_sr) = audio::read_wav(wav_path)?;
+        let ref_24k = audio::resample(&native_samples, native_sr, S3GEN_SR as u32)?;
+        let ref_16k_full = audio::resample(&ref_24k, S3GEN_SR as u32, S3_SR as u32)?;
+
+        let enc_cond_end = ref_16k_full.len().min(ENC_COND_LEN);
+        let s3tok_session = bundle.ensure_s3tokenizer_session()?;
+        let cond_tokens = s3tokenizer::tokenize(
+            s3tok_session,
+            &ref_16k_full[..enc_cond_end],
+            Some(t3::SPEECH_COND_PROMPT_LEN),
+        )?;
+        let t3_cond_prompt_speech_tokens =
+            Array2::from_shape_vec((1, cond_tokens.len()), cond_tokens).expect("row-vector shape");
+
+        let ve_session = bundle.ensure_ve_session()?;
+        let t3_speaker_emb = voice_encoder::compute_embedding(ve_session, &ref_16k_full)?;
+
+        let dec_cond_end = ref_24k.len().min(DEC_COND_LEN);
+        let s3gen_ref_24k = &ref_24k[..dec_cond_end];
+        let prompt_feat_2d = mel::s3gen_log_mel(s3gen_ref_24k);
+        let mel_len1 = prompt_feat_2d.shape()[0];
+        let s3gen_prompt_feat = prompt_feat_2d.insert_axis(Axis(0));
+
+        let s3gen_ref_16k = audio::resample(s3gen_ref_24k, S3GEN_SR as u32, S3_SR as u32)?;
+        let s3tok_session = bundle.ensure_s3tokenizer_session()?;
+        let mut prompt_token_vec = s3tokenizer::tokenize(s3tok_session, &s3gen_ref_16k, None)?;
+
+        // `embed_ref`'s own consistency check: `ref_mels_24.shape[1]` must equal
+        // `2 * ref_speech_tokens.shape[1]` (`token_mel_ratio=2`); truncate the
+        // tokens to match if not, exactly like the Python reference.
+        if mel_len1 != 2 * prompt_token_vec.len() {
+            tracing::warn!(
+                mel_len1,
+                token_len = prompt_token_vec.len(),
+                "reference mel length is not 2x token length; truncating tokens"
+            );
+            prompt_token_vec.truncate(mel_len1 / 2);
+        }
+        let prompt_token_len = prompt_token_vec.len();
+        let s3gen_prompt_token = Array2::from_shape_vec((1, prompt_token_len), prompt_token_vec)
+            .expect("row-vector shape");
+        let s3gen_prompt_token_len = Array1::from_elem(1, prompt_token_len as i64);
+
+        let campplus_session = bundle.ensure_campplus_session()?;
+        let fbank = campplus::extract_features(&s3gen_ref_16k);
+        let s3gen_embedding = campplus::run(campplus_session, &fbank)?;
+
+        Ok(Self {
+            t3_speaker_emb,
+            t3_cond_prompt_speech_tokens,
+            s3gen_prompt_token,
+            s3gen_prompt_token_len,
+            s3gen_prompt_feat,
+            s3gen_embedding,
         })
     }
 }
@@ -127,7 +237,12 @@ pub struct ModelBundle {
     pub perthnet_session: Session,
     pub s3gen_spk_embed_affine_weight: Array2<f32>,
     pub s3gen_spk_embed_affine_bias: Array1<f32>,
-    pub default_voice: DefaultVoice,
+    pub default_voice: VoiceConditioning,
+    /// Lazily loaded (Milestone 6, part B.2): only needed when `--voice` is
+    /// given, so the default-voice-only fast path never pays their load cost.
+    ve_session: Option<Session>,
+    s3tokenizer_session: Option<Session>,
+    campplus_session: Option<Session>,
 }
 
 impl ModelBundle {
@@ -151,8 +266,41 @@ impl ModelBundle {
             s3gen_spk_embed_affine_bias: ndarray_npy::read_npy(
                 models_dir.join("s3gen_spk_embed_affine_bias.npy"),
             )?,
-            default_voice: DefaultVoice::load(&models_dir.join("default_voice"))?,
+            default_voice: VoiceConditioning::load_default(&models_dir.join("default_voice"))?,
+            ve_session: None,
+            s3tokenizer_session: None,
+            campplus_session: None,
         })
+    }
+
+    /// Lazily loads (on first `--voice` use) and returns `models/ve.onnx`'s session.
+    fn ensure_ve_session(&mut self) -> ort::Result<&mut Session> {
+        if self.ve_session.is_none() {
+            self.ve_session = Some(session::build_session(&self.models_dir.join("ve.onnx"))?);
+        }
+        Ok(self.ve_session.as_mut().expect("just ensured"))
+    }
+
+    /// Lazily loads (on first `--voice` use) and returns `models/s3tokenizer.onnx`'s
+    /// session -- shared by both T3's cond-prompt tokens and S3Gen's prompt token.
+    fn ensure_s3tokenizer_session(&mut self) -> ort::Result<&mut Session> {
+        if self.s3tokenizer_session.is_none() {
+            self.s3tokenizer_session = Some(session::build_session(
+                &self.models_dir.join("s3tokenizer.onnx"),
+            )?);
+        }
+        Ok(self.s3tokenizer_session.as_mut().expect("just ensured"))
+    }
+
+    /// Lazily loads (on first `--voice` use) and returns `models/campplus.onnx`'s
+    /// session.
+    fn ensure_campplus_session(&mut self) -> ort::Result<&mut Session> {
+        if self.campplus_session.is_none() {
+            self.campplus_session = Some(session::build_session(
+                &self.models_dir.join("campplus.onnx"),
+            )?);
+        }
+        Ok(self.campplus_session.as_mut().expect("just ensured"))
     }
 
     /// Ensures the flow-encoder session for `bucket` is loaded (from
@@ -174,16 +322,18 @@ impl ModelBundle {
     }
 }
 
-/// Runs the full default-voice pipeline for `params.text`, returning a mono 24kHz
-/// (`S3GEN_SR`) `f32` waveform in `[-1.0, 1.0]`, watermarked.
+/// Runs the full pipeline for `params.text` against either the built-in default
+/// voice or a `--voice` reference clip, returning a mono 24kHz (`S3GEN_SR`)
+/// `f32` waveform in `[-1.0, 1.0]`, watermarked.
 pub fn synthesize(
     bundle: &mut ModelBundle,
     params: &SynthesisParams,
     rng: &mut impl Rng,
 ) -> Result<Vec<f32>, PipelineError> {
-    if params.voice.is_some() {
-        return Err(PipelineError::VoiceCloningNotImplemented);
-    }
+    let voice = match &params.voice {
+        Some(wav_path) => VoiceConditioning::from_reference(bundle, wav_path)?,
+        None => bundle.default_voice.clone(),
+    };
 
     // 1. Text -> tokens. T3's decode loop (t3.rs, unchanged since VAI-004) always
     // indexes a 2-row (cond, uncond) batch, so the text-token batch is always
@@ -208,8 +358,8 @@ pub fn synthesize(
     // 2. T3 cond-prefill + KV-cache decode loop (default-voice conditioning).
     let cond_prefill_embeds = t3::run_cond_prefill(
         &mut bundle.t3_cond_prefill_session,
-        &bundle.default_voice.t3_speaker_emb,
-        &bundle.default_voice.t3_cond_prompt_speech_tokens,
+        &voice.t3_speaker_emb,
+        &voice.t3_cond_prompt_speech_tokens,
         &emotion_adv,
         &text_tokens,
         &cfg_uncond_mask,
@@ -240,15 +390,10 @@ pub fn synthesize(
         return Err(PipelineError::NoSpeechGenerated);
     }
 
-    // 3. Assemble S3Gen's token sequence: default voice's prompt_token + T3-generated
+    // 3. Assemble S3Gen's token sequence: the selected voice's prompt_token + T3-generated
     // tokens (`flow.py`'s own `torch.concat`, done host-side here per ADR-0009).
-    let prompt_token_len = bundle.default_voice.s3gen_prompt_token_len[0] as usize;
-    let prompt_token: Vec<i64> = bundle
-        .default_voice
-        .s3gen_prompt_token
-        .iter()
-        .copied()
-        .collect();
+    let prompt_token_len = voice.s3gen_prompt_token_len[0] as usize;
+    let prompt_token: Vec<i64> = voice.s3gen_prompt_token.iter().copied().collect();
 
     let mut full_token = prompt_token.clone();
     full_token.extend(generated.iter().copied());
@@ -273,7 +418,7 @@ pub fn synthesize(
 
     // 4. Speaker embedding (already-exported CAMPPlus output, normalize + affine).
     let spks = s3gen::embed_speaker(
-        &bundle.default_voice.s3gen_embedding,
+        &voice.s3gen_embedding,
         &bundle.s3gen_spk_embed_affine_weight,
         &bundle.s3gen_spk_embed_affine_bias,
     );
@@ -296,7 +441,7 @@ pub fn synthesize(
         &mut bundle.hifigan_session,
         &final_tokens,
         prompt_token_len,
-        &bundle.default_voice.s3gen_prompt_feat,
+        &voice.s3gen_prompt_feat,
         &spks,
         rng,
     )?;
@@ -317,9 +462,6 @@ mod tests {
 
     #[test]
     fn pipeline_error_display_is_human_readable() {
-        assert!(PipelineError::VoiceCloningNotImplemented
-            .to_string()
-            .contains("not yet implemented"));
         assert!(PipelineError::NoSpeechGenerated
             .to_string()
             .contains("no speech tokens"));

@@ -31,6 +31,13 @@ pub const NUM_LAYERS: usize = 30;
 pub const NUM_HEADS: usize = 16;
 pub const HEAD_DIM: usize = 64;
 
+/// `T3Config.speech_cond_prompt_len` -- the max number of speech tokens T3's
+/// cond-prompt conditioning uses. Reused by `pipeline.rs`'s `--voice`
+/// reference-audio preprocessing (Milestone 6, part B.2) to truncate the
+/// S3-tokenizer's mel input the same way `chatterbox/tts.py::prepare_conditionals`
+/// does (`s3_tokzr.forward(..., max_len=plen)`).
+pub const SPEECH_COND_PROMPT_LEN: usize = 150;
+
 /// Stacked KV cache: `(layers, k_or_v=2, batch, heads, seq, head_dim)`. See
 /// docs/decisions/0005-t3-hand-rolled-decoder-export.md.
 pub type KvCache = Array6<f32>;

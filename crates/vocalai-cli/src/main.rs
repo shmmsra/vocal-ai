@@ -1,7 +1,6 @@
 //! `vocalai` CLI: standalone Chatterbox TTS, per docs/phase1-onnx-rust-cli-plan.md
-//! §3. Milestone 6, part B.1 (`docs/issues.md` VAI-006): default-voice synthesis
-//! only -- `--voice` zero-shot cloning is part B.2 (not yet implemented) and errors
-//! out clearly rather than being silently ignored.
+//! §3. Supports both the built-in default voice and `--voice` zero-shot cloning
+//! from a WAV reference clip (Milestone 6, part B, `docs/issues.md` VAI-006).
 
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -17,8 +16,8 @@ struct Args {
     #[arg(long)]
     text: String,
 
-    /// Reference audio for zero-shot voice cloning. Not yet implemented (Milestone
-    /// 6, part B.2) -- omit to use the built-in default voice.
+    /// Reference audio (WAV) for zero-shot voice cloning. Omit to use the
+    /// built-in default voice.
     #[arg(long)]
     voice: Option<PathBuf>,
 

@@ -246,8 +246,13 @@ $py = "export\.venv\Scripts\python.exe"
 ```
 
 > `export_ve.py` (`ve.onnx`) and `export_s3tokenizer.py` (`s3tokenizer.onnx`) are **not** needed
-> for default-voice synthesis — they're only used by the future `--voice` zero-shot cloning path
-> (Milestone 6 part B.2, not yet implemented). Skip them unless you're working on that path.
+> for default-voice synthesis — they're only used by the `--voice` zero-shot cloning path
+> (Milestone 6 part B.2). Skip them unless you're working on that path; if you are, also run:
+> ```bash
+> $PY export/export_ve.py
+> $PY export/export_s3tokenizer.py
+> ```
+> (PowerShell: `& $py export\export_ve.py` / `& $py export\export_s3tokenizer.py`.)
 
 ### 11.2 Build the CLI
 
@@ -277,8 +282,13 @@ export/.venv/bin/python -c "import wave; w=wave.open('out.wav'); print(w.getncha
 
 **Tuning flags** (all optional, defaults in parentheses): `--exaggeration` (0.5),
 `--cfg-weight` (0.5), `--temperature` (0.8), `--repetition-penalty` (1.2), `--min-p` (0.05),
-`--top-p` (1.0), `--max-new-tokens` (1000). `--voice <ref.wav>` is reserved for zero-shot cloning
-and currently errors out clearly (part B.2, not yet implemented).
+`--top-p` (1.0), `--max-new-tokens` (1000). `--voice <ref.wav>` does zero-shot voice cloning from a
+WAV reference clip (requires `ve.onnx`/`s3tokenizer.onnx` from the note above, plus `campplus.onnx`
+from §11.1's main list):
 
-See `docs/manual-testing.md` → "CLI: default-voice end-to-end synthesis" for the full pass/fail
-criteria and known failure modes.
+```bash
+./target/release/vocalai --text "hello world" --voice ref.wav --out cloned.wav --models-dir models
+```
+
+See `docs/manual-testing.md` → "CLI: default-voice end-to-end synthesis" and "CLI: `--voice`
+zero-shot cloning end-to-end synthesis" for the full pass/fail criteria and known failure modes.

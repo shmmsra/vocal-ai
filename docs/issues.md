@@ -44,28 +44,6 @@ Tickets use the prefix `VAI-NNN`, numbered sequentially (e.g. `VAI-001`, `VAI-00
 
 ## Open Issues
 
-### VAI-006 · P2 · IN PROGRESS (session 2026-08-18) · Milestone 6
-**Wire full pipeline in vocalai-core + clap CLI in vocalai-cli**
-
-**Acceptance criteria**:
-- [x] Full pipeline wired in `vocalai-core` (tokenizer → T3 → S3Gen → HiFiGAN → watermark → WAV) — default-voice path (part B.1)
-- [x] `vocalai-cli` clap CLI implements flags per plan §3 (`--text`, `--voice`, `--exaggeration`, `--cfg-weight`, `--temperature`, `--repetition-penalty`, `--min-p`, `--top-p`, `--max-new-tokens`, `--out`)
-- [ ] `--voice` zero-shot cloning: 16 kHz resample + mel + speaker embedding preprocessing (part B.2, not started — flag exists, returns a clear "not implemented" error)
-- [x] Built-in default voice used when `--voice` is omitted
-- [x] `vocalai --text "hello world" --out out.wav` produces audible, correct 24 kHz speech —
-      unblocked by `VAI-009` (2026-08-18): confirmed non-silent, plausible-duration audio for both
-      the acceptance-criterion command and a much longer sentence (~7.4s), see `docs/CHANGELOG.md`
-- [x] Docs updated (CHANGELOG, STATUS, manual-testing, this ticket)
-
-**Notes**: Depends on `VAI-005` and `VAI-008` (closed). Part B.1 (default-voice pipeline + CLI) is
-code-complete, `make check`-clean, and now verified end-to-end for real, arbitrary-length text as
-of 2026-08-18 (`VAI-009` closed). Part B.2 (`--voice` cloning: `voice_encoder.rs`, `s3tokenizer.rs`,
-`campplus.rs`, the mel-filterbank builder) has not been started — this is the only remaining item
-before VAI-006 itself can close. See `docs/phase1-onnx-rust-cli-plan.md` §7 Milestone 6 and §8
-Verification/Exit Criteria (end-to-end, voice cloning).
-
----
-
 ### VAI-007 · P2 · OPEN · Milestone 7
 **Per-platform packaging: artifact matrix, bundling, smoke tests**
 
@@ -89,6 +67,7 @@ Verification/Exit Criteria (end-to-end, voice cloning).
 
 | Date | Ticket | Title | Commit |
 |------|--------|-------|--------|
+| 2026-08-18 | VAI-006 | Wire full pipeline in `vocalai-core` + clap CLI in `vocalai-cli`, including part B.2 `--voice` zero-shot cloning (`voice_encoder.rs`, `s3tokenizer.rs`, `campplus.rs`, `mel.rs`'s hand-rolled mel/Kaldi-fbank DSP) | _pending_ |
 | 2026-08-18 | VAI-009 | Fix two trace-baking bugs in `export_hifigan.py` (envelope `.repeat(int)`, noise-buffer size) so `speech_feat` is a genuine dynamic ONNX axis; extend `check_hifigan` to 3 frame counts — unblocks VAI-006's end-to-end acceptance criterion | `9ff4b4e` |
 | 2026-08-18 | VAI-008 | Export S3Gen's flow-encoder (bucketed) + CAMPPlus (fixed window) to ONNX, closing the `mu`/`spks` export gap found while starting VAI-006 | `65b1642` |
 | 2026-08-18 | VAI-005 | Export PerthNet encoder; implement STFT/ISTFT/resample watermarking pipeline in `watermark.rs` | `91c92ea` |

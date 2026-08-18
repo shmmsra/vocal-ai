@@ -491,8 +491,9 @@ python parity_check.py --component hifigan
   `tokenizer.json`, `t3_cond_prefill.onnx`, `t3_decoder.onnx`, `t3_speech_emb.npy`,
   `t3_speech_pos_emb.npy`, `s3gen_estimator.onnx`, `s3gen_flow_encoder_{200,400,600,800,1000,1200}.onnx`,
   `hifigan.onnx`, `perthnet_encoder.onnx`, `s3gen_spk_embed_affine_{weight,bias}.npy`, and
-  `default_voice/*.npy`. It does **not** load `ve.onnx`, `s3tokenizer.onnx`, or `campplus.onnx` —
-  those are for the future `--voice` cloning path (part B.2).
+  `default_voice/*.npy`. `ve.onnx`, `s3tokenizer.onnx`, and `campplus.onnx` are loaded lazily, only
+  on the first `--voice` call (see the part B.2 section below) -- the default-voice-only path never
+  pays their load cost.
 
 **Test command(s)** (see `docs/dev-setup.md` §11 for the full per-platform export list this assumes
 is already done; `--out /tmp/out.wav` shown for POSIX, use `--out out.wav` on Windows):
@@ -536,6 +537,70 @@ generalizes across frame counts rather than coincidentally matching one:
   fix -- see the "ONNX export + parity check: dynamic-length HiFiGAN (VAI-009)" section above.
 - Silence (all-zero samples) or clipped-flat output: a real bug in the T3/S3Gen/HiFiGAN/watermark
   wiring -- investigate `pipeline::synthesize`'s tensor assembly.
+
+---
+
+## CLI: `--voice` zero-shot cloning end-to-end synthesis (VAI-006, part B.2)
+
+**Prerequisites**:
+- Same `models/` directory as the default-voice section above, plus `ve.onnx`, `s3tokenizer.onnx`,
+  and `campplus.onnx` (all already produced by Milestone 2/VAI-008's export steps -- no new export
+  step needed for this ticket).
+- A short (a few seconds to ~10s) mono or stereo WAV reference clip. Any real speech recording
+  works; a previous `vocalai` output WAV (e.g. `/tmp/out.wav` from the default-voice section) is a
+  convenient stand-in if you don't have one handy.
+
+**Test command(s)**:
+```bash
+cargo build --release -p vocalai-cli
+./target/release/vocalai --text "This is a voice cloning test." \
+  --voice /tmp/out.wav --out /tmp/cloned.wav --models-dir models
+```
+
+**What to observe**:
+- Prints `Wrote /tmp/cloned.wav` and exits 0.
+- `/tmp/cloned.wav` is a mono 24000 Hz 16-bit PCM WAV whose duration is plausible for the given text
+  (a few seconds), not silent: `python3 -c "import wave,struct; w=wave.open('/tmp/cloned.wav'); f=w.readframes(w.getnframes()); s=struct.unpack('<%dh'%w.getnframes(),f); print(w.getparams()); print('peak', max(abs(x) for x in s))"`.
+- Listen to it: the voice timbre should audibly differ from the built-in default voice (run the
+  default-voice command from the section above for an A/B comparison) and should bear some
+  resemblance to the reference clip's speaker, though this repo has no automated speaker-similarity
+  metric -- judge by ear.
+- First run against a fresh `--models-dir` is slower than the default-voice path (loads three more
+  ONNX sessions -- `ve.onnx`, `s3tokenizer.onnx`, `campplus.onnx` -- lazily on this first `--voice`
+  call); the default-voice path (no `--voice` flag) should show no such slowdown, confirming the
+  lazy-load only triggers when actually needed.
+
+**Pass criteria**:
+- Exits 0, produces a non-silent WAV of plausible duration.
+- The default-voice command (no `--voice`) still works afterwards with no regression.
+
+**Fail indicators**:
+- `error: failed to read --voice reference audio: ...`: the reference path doesn't exist or isn't a
+  WAV file (this pipeline is WAV-only, matching `audio.rs`'s existing convention -- no mp3/flac).
+- `error: failed to resample --voice reference audio: ...`: an unusual/invalid sample rate in the
+  reference file.
+- `error: ONNX Runtime session error: ...`: check `models/ve.onnx`/`s3tokenizer.onnx`/`campplus.onnx`
+  are present and not corrupted.
+- Silence or garbled/noise-only output: a real bug in `pipeline::VoiceConditioning::from_reference`'s
+  tensor assembly, `mel.rs`'s DSP, or `voice_encoder.rs`'s partial-utterance striding -- these have
+  no automated cross-language parity gate (see the residual-risk note in `mel.rs`'s module doc and
+  the new ADR), so a wrong-sounding clone (not merely a nonzero-vs-silent bug) is the kind of issue
+  only this manual listen would catch.
+
+**Verified during implementation (2026-08-18)**: the repo owner's first manual run of this exact
+test (with a real, longer reference clip, `tmp/sample-voice-1.wav`) caught a real bug --
+`synthesize` was silently reading the S3Gen prompt-token *values* from the built-in default voice
+regardless of `--voice` (a leftover from the `DefaultVoice` -> `VoiceConditioning` rename's
+find-replace missing one multi-line occurrence), causing a `prompt_feat's N frames exceed
+total_mel_len=M` panic in `s3gen::build_cond` once the two diverged enough. The
+pre-fix self-check happened to use a short reference clip that didn't trip the mismatch, so it
+shipped undetected until this manual test. Fixed by reading `voice.s3gen_prompt_token` instead of
+`bundle.default_voice.s3gen_prompt_token`; see `docs/CHANGELOG.md`'s VAI-006 part B.2 entry for the
+full diagnosis. Post-fix: `vocalai --text "This is a voice cloning test." --voice
+tmp/sample-voice-1.wav --out tmp/cloned.wav --models-dir models` produced a 52800-frame (~2.2s)
+mono 24kHz WAV, peak amplitude 32767/32767, RMS ~3937 -- genuine non-silent audio, no crash. The
+default-voice command was re-run immediately after and still succeeded with no regression.
+Audible confirmation that the clone actually resembles the reference speaker is still outstanding.
 
 ---
 
