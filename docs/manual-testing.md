@@ -57,11 +57,11 @@ make check                # everything (fast + parity, incl. T3, plus Rust) — 
 downloads real HuggingFace checkpoints on first run.
 
 **What to observe**: `test-py-fast` collects/runs only `test_requirements.py` +
-`_common.allclose_report`'s 3 pure tests (4 total, "5 deselected"). `test-py-parity-ci`
-runs 4 of the 5 `@pytest.mark.parity` tests — hifigan/ve/s3tokenizer/s3gen ("5
-deselected", since the T3 test carries *two* markers and gets excluded by
-`-m "parity and not heavy_build"`). `test-py-parity` runs all 5 (including T3, "4
-deselected"). `make check` still runs all 9.
+`_common.allclose_report`'s 3 pure tests (4 total, "8 deselected"). `test-py-parity-ci`
+runs 7 of the 8 `@pytest.mark.parity` tests — hifigan/ve/s3tokenizer/s3gen/perthnet/
+s3gen_flow_encoder/campplus ("5 deselected", since the T3 test carries *two* markers
+and gets excluded by `-m "parity and not heavy_build"`). `test-py-parity` runs all 8
+(including T3, "4 deselected"). `make check` still runs all 12.
 
 **Pass criteria**:
 - `make test-py-fast` / `make test-py-parity-ci` exit 0 in seconds to ~15s, no T3 checkpoint
@@ -69,7 +69,7 @@ deselected"). `make check` still runs all 9.
 - `make test-py-parity` exits 0 (downloads `t3_cfg.safetensors` too, ~2GB, on a clean
   `~/.cache/huggingface`; the export step alone measures ~9GB peak memory — fine on a real
   dev machine, not on this repo's free-tier CI runner, see ADR-0007).
-- `make check` exits 0 and runs all 9 Python tests + all Rust tests (unchanged from before
+- `make check` exits 0 and runs all 12 Python tests + all Rust tests (unchanged from before
   the CI split — see ADR-0006).
 
 **Fail indicators**:
@@ -85,7 +85,7 @@ deselected"). `make check` still runs all 9.
   first** — same stale-cache trap as the Milestone 2 warning above: a cached `.onnx` file
   silently skips the real export path, which is exactly where the ~9GB memory cost (and any
   export-time bug) actually lives.
-- `test-py-fast` and `test-py-parity` together don't add up to all 9 collected tests —
+- `test-py-fast` and `test-py-parity` together don't add up to all 12 collected tests —
   means `export/pytest.ini`'s marker registration or a test's decorator is wrong.
 
 ---
@@ -364,6 +364,74 @@ librosa's default `soxr_hq` — this is an accepted, documented residual risk (s
   callable` or an `ImportError` mentioning `pkg_resources`, check `setuptools<81` is actually
   installed in the active venv (`pip show setuptools`) — a stale venv or a broadened pin is the
   likely cause, not a code regression.
+
+---
+
+## ONNX export + parity check: S3Gen flow encoder (bucketed) + CAMPPlus (VAI-008)
+
+**Test command(s)**:
+```bash
+cd export
+source .venv/bin/activate  # if not already active — see docs/dev-setup.md §2
+
+python export_s3gen_flow_encoder.py   # writes models/s3gen_flow_encoder_{200,400,600,800,1000,1200}.onnx
+python export_campplus.py             # writes models/campplus.onnx + s3gen_spk_embed_affine_{weight,bias}.npy
+python export_default_voice.py        # writes models/default_voice/*.npy (no parity check — see below)
+
+python parity_check.py --component s3gen_flow_encoder
+python parity_check.py --component campplus
+```
+
+**Setup**: Same venv as prior milestones — downloads `s3gen.safetensors` if not already cached
+(shared with Milestone 3's `export_s3gen.py`/`export_s3tokenizer.py`; `export_default_voice.py`
+additionally downloads `conds.pt`, both from `ResembleAI/chatterbox` on HuggingFace).
+
+**What to observe**:
+- `export_s3gen_flow_encoder.py` prints six `Exported S3Gen flow encoder bucket to ...` lines
+  (one per `TOKEN_BUCKETS` entry: 200/400/600/800/1000/1200), producing six `.onnx` files.
+- `export_campplus.py` prints `Exported CAMPPlus to ...` plus a second line naming the two
+  `.npy` affine-layer weight files.
+- `export_default_voice.py` prints one `Wrote ...` line per tensor field (7 total: T3's
+  `speaker_emb`/`cond_prompt_speech_tokens`/`emotion_adv`, S3Gen's
+  `prompt_token`/`prompt_token_len`/`prompt_feat`/`embedding`).
+- `parity_check.py --component s3gen_flow_encoder` prints one `[PASS]`/`[FAIL]` line covering
+  *all six buckets* (see `check_s3gen_flow_encoder`'s docstring — each bucket is checked both for
+  ONNX-vs-eager match and for padding invariance).
+- `parity_check.py --component campplus` prints one `[PASS]`/`[FAIL]` line for the single
+  400-frame graph.
+
+**Pass criteria**:
+- All three export scripts exit 0 and produce the files listed above.
+- `parity_check.py --component s3gen_flow_encoder` exits 0, `[PASS]`, `max_abs_diff` on the
+  order of `1e-5`–`1e-6`.
+- `parity_check.py --component campplus` exits 0, `[PASS]`, `max_abs_diff` on the order of
+  `1e-5`–`1e-6`.
+- `python -m pytest` in `export/` (or `make check`) passes both
+  `test_s3gen_flow_encoder_export_matches_pytorch_reference` and
+  `test_campplus_export_matches_pytorch_reference`.
+
+**Known gap — bucketed, not dynamic, by necessity**: both graphs were originally attempted as
+single dynamic-length exports and found broken — see ADR-0009 for the full diagnosis
+(`EspnetRelPositionalEncoding`'s Python-int `size` argument bakes the tracing length for the flow
+encoder; `CAMLayer.seg_pooling`'s trim-to-original-length op only round-trips correctly through
+ONNX when it's a no-op, requiring CAMPPlus's frame count to be a multiple of 200). Rust
+(Milestone 6, Part B) must pick the right bucket / assemble exactly `CAMPPLUS_FRAMES` real frames
+— this is load-bearing correctness logic, not an optimization, and should be exercised by its own
+tests when written.
+`export_default_voice.py` has no parity check — it only copies tensors out of `conds.pt`
+unchanged (`torch.load` isn't reachable from Rust), so there is nothing to compare against.
+
+**Fail indicators**:
+- Any `[FAIL]` line, or `max_abs_diff` far above `1e-4`/`1e-3` — re-check
+  `export_s3gen_flow_encoder.py`'s `make_pad_mask(..., max_len=...)` calls specifically (an
+  earlier version of this wrapper omitted `max_len` and silently computed masks against the
+  *padded* length instead of the bucket's physical length, causing a shape-mismatch crash, not a
+  quiet numerical drift — see git history if this regresses).
+- `export_campplus.py`'s `assert CAMPPLUS_FRAMES % 200 == 0` firing means someone changed the
+  constant without re-reading the module docstring's `seg_pooling` explanation.
+- Before trusting a local parity result after touching either export script, clear the relevant
+  `models/s3gen_flow_encoder_*.onnx` / `models/campplus.onnx` files first — same stale-cache trap
+  documented in the Milestone 2/4 sections above.
 
 ---
 

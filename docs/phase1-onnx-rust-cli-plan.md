@@ -130,7 +130,9 @@ Per-component export assessment (from source read):
 | Component | Shape | Export difficulty | Notes |
 |---|---|---|---|
 | **T3 backbone** (Llama-style) | static per-step forward + KV-cache | Medium | decoder-with-past pattern; token loop + sampling driven from Rust |
-| **S3Gen flow estimator** | static forward, called ~10× (Euler ODE) | Easy | Euler update loop in Rust |
+| **S3Gen flow estimator** (CFM decoder) | static forward, called ~10× (Euler ODE) | Easy | Euler update loop in Rust; `x,mu,spks,cond -> dxdt` only — does not itself produce `mu`/`spks` (see next two rows, added after a gap found starting Milestone 6, ADR-0009) |
+| **S3Gen flow *encoder*** (token → `mu`) | 6-block conformer, relative-position attention | Medium — dynamic-length export found broken, exported as 6 fixed-length buckets instead (ADR-0009) | `input_embedding`/`encoder`/`encoder_proj`; token-count buckets 200/400/600/800/1000/1200 |
+| **CAMPPlus** (x-vector, `spks`) | CNN/TDNN + pooling | Easy in isolation, but dynamic-length export found broken — a single fixed 400-frame graph instead (ADR-0009) | Kaldi-fbank input computed host-side, like VE/S3-tokenizer's mel |
 | **HiFiGAN vocoder** | Conv1d/ConvTranspose1d, no branches | Easiest | `remove_weight_norm()` before tracing |
 | **Voice encoder** | mel → speaker embedding | Easy | needs mel preprocessing |
 | **S3 tokenizer** (speech) | encoder | Easy | needs mel/feature preprocessing |

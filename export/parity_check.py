@@ -21,9 +21,11 @@ from transformers.generation.logits_process import (
     TopPLogitsWarper,
 )
 
+import export_campplus
 import export_hifigan
 import export_perthnet
 import export_s3gen
+import export_s3gen_flow_encoder
 import export_s3tokenizer
 import export_t3
 import export_ve
@@ -195,6 +197,77 @@ def check_s3gen(atol: float, rtol: float) -> ParityResult:
     mel_passed, mel_diff = allclose_report(mel_ref, mel_onnx, atol, rtol)
     wav_passed, wav_diff = allclose_report(wav_ref, wav_onnx, atol, rtol)
     return ParityResult("s3gen", mel_passed and wav_passed, max(mel_diff, wav_diff))
+
+
+def check_s3gen_flow_encoder(atol: float, rtol: float) -> ParityResult:
+    """Checks every bucket in `export_s3gen_flow_encoder.TOKEN_BUCKETS`, each at a
+    *padded* `token_len < bucket` (the real runtime usage pattern -- see that
+    module's docstring for why bucketing was needed at all). Two properties are
+    checked per bucket:
+    1. ONNX matches the eager PyTorch wrapper exactly at that bucket's physical
+       length (the property bucketing relies on).
+    2. Padding invariance: changing the padding tokens beyond `token_len` must not
+       change `mu`'s valid-length prefix -- proves `make_pad_mask`-based masking
+       actually isolates real content from pad content, which is what lets Rust
+       reuse one bucket for many different real lengths.
+    """
+    torch.manual_seed(0)
+    module = export_s3gen_flow_encoder.build_module()
+
+    overall_passed = True
+    max_diff = 0.0
+    for bucket in export_s3gen_flow_encoder.TOKEN_BUCKETS:
+        onnx_path = models_dir() / f"s3gen_flow_encoder_{bucket}.onnx"
+        if not onnx_path.exists():
+            export_s3gen_flow_encoder.export_bucket(bucket, onnx_path)
+
+        real_len = max(1, bucket - 37)  # arbitrary non-trivial amount of padding
+        token = torch.randint(0, 6561, (1, bucket))
+        token_len = torch.tensor([real_len])
+        with torch.no_grad():
+            mu_ref, mask_ref = module(token, token_len)
+        mu_ref, mask_ref = mu_ref.numpy(), mask_ref.numpy()
+
+        mu_onnx, mask_onnx = _run_onnx(
+            onnx_path, {"token": token.numpy(), "token_len": token_len.numpy()}
+        )
+        mu_passed, mu_diff = allclose_report(mu_ref, mu_onnx, atol, rtol)
+        mask_passed, mask_diff = allclose_report(mask_ref, mask_onnx, atol, rtol)
+
+        token_repadded = token.clone()
+        token_repadded[:, real_len:] = torch.randint(
+            0, 6561, (1, bucket - real_len)
+        )
+        with torch.no_grad():
+            mu_repadded, _ = module(token_repadded, token_len)
+        valid_frames = 2 * real_len
+        invariance_passed, invariance_diff = allclose_report(
+            mu_ref[:, :, :valid_frames], mu_repadded.numpy()[:, :, :valid_frames], atol, rtol
+        )
+
+        overall_passed = overall_passed and mu_passed and mask_passed and invariance_passed
+        max_diff = max(max_diff, mu_diff, mask_diff, invariance_diff)
+
+    return ParityResult("s3gen_flow_encoder", overall_passed, max_diff)
+
+
+def check_campplus(atol: float, rtol: float) -> ParityResult:
+    """Checked only at exactly `CAMPPLUS_FRAMES` -- see `export_campplus.py`'s
+    docstring for why this graph is unsound at any other frame count (no internal
+    masking, so there is no padding scheme to check invariance against)."""
+    torch.manual_seed(0)
+    campplus = export_campplus.build_module()
+    onnx_path = models_dir() / "campplus.onnx"
+    if not onnx_path.exists():
+        export_campplus.export(onnx_path)
+
+    fbank = torch.randn(1, export_campplus.CAMPPLUS_FRAMES, export_campplus.FEAT_DIM)
+    with torch.no_grad():
+        torch_out = campplus(fbank).numpy()
+
+    (onnx_out,) = _run_onnx(onnx_path, {"fbank": fbank.numpy()})
+    passed, diff = allclose_report(torch_out, onnx_out, atol, rtol)
+    return ParityResult("campplus", passed, diff)
 
 
 def check_perthnet(atol: float, rtol: float) -> ParityResult:
@@ -492,6 +565,8 @@ CHECKS = {
     "ve": check_ve,
     "s3tokenizer": check_s3tokenizer,
     "s3gen": check_s3gen,
+    "s3gen_flow_encoder": check_s3gen_flow_encoder,
+    "campplus": check_campplus,
     "t3": check_t3,
     "perthnet": check_perthnet,
 }

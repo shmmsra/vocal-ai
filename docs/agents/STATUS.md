@@ -17,7 +17,9 @@
 | 1 — Milestone 3: Export S3Gen flow estimator + Euler ODE loop, chain into HiFiGAN | ✅ Complete |
 | 1 — Milestone 4: Export T3 as decoder-with-past, KV-cache decode loop + sampling | ✅ Complete |
 | 1 — Milestone 5: Export PerthNet encoder; STFT/ISTFT/resample watermarking in `watermark.rs` | ✅ Complete |
-| 1 — Milestones 6–7: full pipeline wiring + CLI, per-platform packaging (see `docs/phase1-onnx-rust-cli-plan.md` §7) | 📋 Planned |
+| 1 — Milestone 6, part A (VAI-008): Export S3Gen's flow-encoder (bucketed) + CAMPPlus to ONNX | ✅ Complete |
+| 1 — Milestone 6, part B (VAI-006): wire the full pipeline + CLI | 📋 Planned |
+| 1 — Milestone 7: per-platform packaging (see `docs/phase1-onnx-rust-cli-plan.md` §7) | 📋 Planned |
 
 *Update this table as phases progress. Use ✅ Complete / 🔄 In progress / 📋 Planned / 🚫 Blocked.*
 
@@ -29,16 +31,18 @@ lookup, `.npy` round-trip, end-to-end synthetic decode loop), and `watermark.rs`
 STFT/ISTFT/resample tests (Hann-window values, reflect-pad convention, dB normalize/denormalize
 round-trip, a synthetic-signal STFT→ISTFT round trip, resample duration preservation, an
 identity-encoder end-to-end `apply_watermark` round trip, and encoder-error propagation), all pure
-`ndarray`/DSP math with no ONNX Runtime session or model file needed) + 10 real Python tests in
+`ndarray`/DSP math with no ONNX Runtime session or model file needed) + 12 real Python tests in
 `export/` (`test_requirements.py` checks `export/requirements.txt` pins; `test_parity_check.py`
 covers the `_common.allclose_report` comparison helper plus end-to-end ONNX-vs-PyTorch parity for
 HiFiGAN, the voice encoder, the S3 tokenizer, the S3Gen flow estimator (mel→waveform, chained
 through the Milestone-2 HiFiGAN export), T3 (greedy-decode token-sequence + per-step logits parity
-against the real `transformers`-backed reference, `parity_check.py::check_t3`), and now PerthNet's
+against the real `transformers`-backed reference, `parity_check.py::check_t3`), PerthNet's
 encoder (`parity_check.py::check_perthnet`, synthetic-magspec parity against the real `Encoder`
-submodule) — these download the Chatterbox checkpoint from HuggingFace on first run (PerthNet's
-weights ship inside the `resemble-perth` package itself, no download needed) and require
-`export/requirements.txt` installed, see `docs/dev-setup.md`).
+submodule), and now the S3Gen flow-encoder (`check_s3gen_flow_encoder`, all 6 `TOKEN_BUCKETS`
+checked for both ONNX-vs-eager match and padding invariance) and CAMPPlus
+(`check_campplus`, single fixed 400-frame graph) — these download the Chatterbox checkpoint from
+HuggingFace on first run (PerthNet's weights ship inside the `resemble-perth` package itself, no
+download needed) and require `export/requirements.txt` installed, see `docs/dev-setup.md`).
 `make check` passes cleanly. No placeholder/ignored tests remain.
 
 **Residual risk (VAI-005)**: `watermark.rs`'s STFT/ISTFT/resample math has no PyTorch-reference
@@ -49,10 +53,22 @@ bit-exact with librosa's default `soxr_hq`. Correctness rests on round-trip unit
 cross-language numerical parity — flagged, not silently assumed, and worth revisiting once
 Milestone 6 makes real end-to-end audio available to listen to.
 
+**Residual risk (VAI-008)**: CAMPPlus's ONNX input is precomputed Kaldi-style fbank features
+(`torchaudio.compliance.kaldi.fbank`); the Rust-side port of that feature extraction is not
+guaranteed bit-exact, same category of risk as the watermark resampler gap above — see ADR-0009.
+Separately (not a residual risk, but a real constraint downstream code must respect): both new
+exports are fixed-length/bucketed, not dynamic — the S3Gen flow-encoder ships 6 static buckets
+(`TOKEN_BUCKETS = 200..1200`) and CAMPPlus ships one static 400-frame graph, because a first
+dynamic-length attempt at each was found broken (see ADR-0009 for the full diagnosis: relative-
+position-encoding and `seg_pooling` export bugs in the third-party reference code, not this repo's
+own math). Milestone 6's Rust wiring must pick the right bucket / assemble exactly 400 real frames
+for CAMPPlus — this is load-bearing correctness logic.
+
 **CI**: split into two workflows since 2026-08-17 — `.github/workflows/ci.yml` (fast:
 fmt/clippy/`cargo test`/`pytest -m "not parity"`) and `.github/workflows/parity.yml` (real-
-checkpoint ONNX-vs-PyTorch tests, `pytest -m "parity and not heavy_build"` — 4 of the 5:
-hifigan/ve/s3tokenizer/s3gen). Same triggers as before (every push/PR to `main`); see ADR-0006.
+checkpoint ONNX-vs-PyTorch tests, `pytest -m "parity and not heavy_build"` — 7 of the 8:
+hifigan/ve/s3tokenizer/s3gen/perthnet/s3gen_flow_encoder/campplus). Same triggers as before (every
+push/PR to `main`); see ADR-0006.
 T3's parity test (`@pytest.mark.heavy_build`) is excluded from CI as of 2026-08-18 — its
 from-scratch ONNX export measured ~9GB peak memory, more than this free-tier private-repo
 runner has (verified independent of `do_constant_folding`; `external_data=True` is silently
@@ -66,9 +82,10 @@ test-py-parity`/`make check`) and must be run manually before committing changes
 
 The next logical work, in priority order. Update at the end of every session.
 
-1. Milestone 6 — wire the full pipeline (tokenizer → T3 → S3Gen → HiFiGAN → watermark → WAV) in
-   `vocalai-core`, plus the `clap` CLI in `vocalai-cli` (see `docs/phase1-onnx-rust-cli-plan.md`
-   §7, milestone 6). This is also the first point real end-to-end audio exists to manually verify
+1. Milestone 6, part B (VAI-006) — wire the full pipeline (tokenizer → T3 → S3Gen → HiFiGAN →
+   watermark → WAV) in `vocalai-core`, plus the `clap` CLI in `vocalai-cli` (see
+   `docs/phase1-onnx-rust-cli-plan.md` §7, milestone 6, and ADR-0009 for the export-gap context
+   part A closed). This is also the first point real end-to-end audio exists to manually verify
    `watermark.rs`'s resampler-fidelity residual risk (see STATUS test-counts section above).
 2. See `docs/issues.md` for the tracked ticket (`VAI-006`).
 
@@ -78,6 +95,7 @@ The next logical work, in priority order. Update at the end of every session.
 
 | Date | Ticket | Summary | Commit |
 |------|--------|---------|--------|
+| 2026-08-18 | VAI-008 | Export S3Gen's flow-encoder (bucketed, ADR-0009) + CAMPPlus (fixed 400-frame window) to ONNX, closing the `mu`/`spks` gap found while starting Milestone 6 | _pending_ |
 | 2026-08-18 | VAI-005 | Export PerthNet encoder; implement STFT/ISTFT/resample watermarking pipeline (`watermark.rs`); pin `setuptools<81` (real fix for a `pkg_resources` removal breaking `resemble-perth`) | `91c92ea` |
 | 2026-08-18 | — | Add ADR-0008 resolving PerthNet/Chatterbox license question (both MIT) | `1f29052` |
 | 2026-08-18 | — | Exclude T3 parity from CI, `heavy_build` marker (ADR-0007) — the ~9GB export-time memory is a real resource ceiling, not what the `d536fac` fix (below) addressed | `98e549b` |

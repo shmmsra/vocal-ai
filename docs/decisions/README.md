@@ -67,6 +67,7 @@ What becomes easier? What becomes harder? What new commitments does this create?
 | [0006](0006-split-ci-into-fast-and-parity-workflows.md) | Split CI into fast + parity workflows | Accepted |
 | [0007](0007-exclude-t3-parity-from-ci.md) | Exclude T3's parity check from CI; run it locally instead | Accepted |
 | [0008](0008-third-party-license-attribution.md) | Third-party license attribution for bundled ML assets (PerthNet + Chatterbox, both MIT) | Accepted |
+| [0009](0009-s3gen-flow-encoder-and-campplus-export.md) | Export S3Gen's flow encoder + CAMPPlus as fixed-length/bucketed graphs; the Milestone 3 export was incomplete | Accepted |
 
 *Add new rows as ADRs accumulate.*
 

@@ -6,6 +6,46 @@
 
 ---
 
+## 2026-08-18 — VAI-008: Export S3Gen's flow encoder + CAMPPlus to ONNX (closes a gap found starting Milestone 6)
+
+**What changed**: Starting Milestone 6 (VAI-006 — wire the full pipeline), a source read of
+`chatterbox/models/s3gen/{s3gen,flow}.py` found that Milestone 3's "S3Gen flow estimator" export
+was only the *downstream* CFM diffusion network (`x,mu,spks,cond -> dxdt`); nothing had ever
+exported the *upstream* piece that produces real `mu`/`spks` from speech tokens + a reference
+voice. `parity_check.py::check_s3gen` had always fed random synthetic `mu`/`spks`/`cond` into the
+estimator — nothing mechanically proved the real token→mel chain worked.
+
+Two new exports close the gap: `export/export_s3gen_flow_encoder.py` (wraps `flow`'s real
+`input_embedding`/`encoder`/`encoder_proj` — the token→`mu` path) and `export/export_campplus.py`
+(wraps `CAMPPlus`, S3Gen's x-vector speaker encoder — the `spks` path; also dumps
+`spk_embed_affine_layer`'s weights for a hand-rolled Rust matmul, same treatment T3's embedding
+table got under ADR-0005). `export/export_default_voice.py` dumps the bundled `conds.pt`'s tensor
+fields to `.npy` so the built-in default voice works without a `--voice` flag (no parity check —
+it's a data copy, not a model export). `export/parity_check.py` gained
+`check_s3gen_flow_encoder`/`check_campplus`; `export/tests/test_parity_check.py` gained the
+matching pytest wrappers (now 8 `@pytest.mark.parity` tests, 12 total Python tests).
+
+**What was rejected / what changed mid-flight**: both new networks were *first* exported with a
+single dynamic-length axis (the convention every other export in this repo uses) — and both were
+found broken by a manual sanity check at a shape other than the tracing example (a check the
+existing same-shape-only parity convention doesn't catch). `EspnetRelPositionalEncoding` bakes its
+Python-`int` `size` argument into the flow-encoder's graph as a constant; `CAMLayer.seg_pooling`'s
+pool→expand→trim pattern only round-trips correctly through ONNX when the trim is a no-op. Rather
+than hand-roll a reimplementation (T3/ADR-0005's more expensive fallback), both are now
+fixed-length/bucketed exports: the flow encoder ships six static buckets
+(`TOKEN_BUCKETS = 200..1200`) selected by real token count and padded via `token_len`-driven
+masking (parity-checked for *padding invariance*, not just same-shape match); CAMPPlus ships one
+static 400-frame graph (any multiple of 200 is safe — enforced by an `assert`), and Rust must
+always feed real (not zero-padded) content at that exact length. Full diagnosis, bisection
+results, and the decision rationale are in ADR-0009.
+
+**What's next**: Milestone 6's Rust wiring (VAI-006) — `audio.rs` (WAV I/O + the four DSP
+front-ends: VE's 16kHz/40-mel, S3-tokenizer's 16kHz/128-mel, S3Gen's 24kHz/80-mel reference mel,
+and CAMPPlus's Kaldi-style fbank), bucket-selection/padding logic for the flow encoder, the
+default-voice loader, and the `clap` CLI.
+
+---
+
 ## 2026-08-18 — VAI-005: Export PerthNet encoder, implement STFT/ISTFT/resample watermarking (`watermark.rs`)
 
 **What changed**: `export/export_perthnet.py` exports `PerthNet.encoder` (the Conv1d

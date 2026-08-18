@@ -28,7 +28,12 @@
 - [x] Milestone 3: Export S3Gen flow estimator; implement the Euler ODE loop; chain into HiFiGAN
 - [x] Milestone 4: Export T3 as decoder-with-past; implement the KV-cache decode loop + sampling
 - [x] Milestone 5: Export PerthNet; wire watermarking into output
-- [ ] Milestone 6: Wire the full pipeline + `clap` CLI; support `--voice` zero-shot cloning
+- [x] Milestone 6, part A (VAI-008): Export S3Gen's flow-encoder (bucketed, `TOKEN_BUCKETS`) +
+  CAMPPlus (fixed 400-frame window) to ONNX, closing a gap found while starting Milestone 6 —
+  only the CFM estimator (Milestone 3) had been exported; nothing produced real `mu`/`spks`. See
+  ADR-0009.
+- [ ] Milestone 6, part B (VAI-006): Wire the full pipeline + `clap` CLI; support `--voice`
+  zero-shot cloning
 - [ ] Milestone 7: Per-platform packaging (macOS/CoreML, Windows/Linux CUDA, CPU fallback)
 
 ---
