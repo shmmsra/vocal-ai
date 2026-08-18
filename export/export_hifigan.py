@@ -19,11 +19,16 @@ via manual reflect-pad + `torch.stft(..., return_complex=False)`, `_istft` via a
 precomputed inverse-DFT matrix + `torch.nn.functional.fold` (overlap-add), with
 window-envelope (COLA) normalization matching `torch.istft`'s default behavior.
 
-KNOWN LIMITATION: the overlap-add's `output_size` is baked in from the traced
-example's frame count (a plain Python int, not a tensor op), so the exported graph
-is only proven correct for a fixed input length — matching this ticket's
-acceptance criteria (fixed input, parity check). Making it fully length-dynamic is
-follow-up work before Milestone 6 (real variable-length CLI audio).
+DYNAMIC LENGTH (VAI-009): `speech_feat`'s time axis is a genuine ONNX dynamic axis.
+Two trace-baking bugs had to be fixed to get there (see ADR-0009 for the same
+category of issue in the flow-encoder/CAMPPlus exports): the overlap-add envelope
+used to build its window via `.repeat(1, 1, num_frames)` with `num_frames` read as a
+plain Python int off `.shape`, baking the traced frame count; and the deterministic
+source noise (`_sine_gen_deterministic`) used to draw `torch.tensor(rng.randn(*shape))`
+sized off the traced sample count, which the exporter registers as a literal ONNX
+constant (see its own `TracerWarning`). Both are now built from a fixed-size buffer
+sliced dynamically, so the exported graph generalizes to any input length up to
+`_NOISE_BUFFER_SAMPLES`.
 
 See docs/phase1-onnx-rust-cli-plan.md §4/§7 (Milestone 2).
 """
@@ -98,6 +103,9 @@ def _inverse_dft_matrices(n_fft: int, window: torch.Tensor) -> tuple[torch.Tenso
     return cos_mat.float(), sin_mat.float()
 
 
+_NOISE_BUFFER_SAMPLES = 1_500_000  # comfortably above the largest realistic S3Gen bucket's sample count
+
+
 def _sine_gen_deterministic(
     f0: torch.Tensor,
     harmonic_num: int,
@@ -105,6 +113,7 @@ def _sine_gen_deterministic(
     noise_std: float,
     voiced_threshold: float,
     sampling_rate: int,
+    noise_buffer: torch.Tensor,
 ) -> torch.Tensor:
     """Reimplements SineGen.forward()'s math, replacing its two live-random draws
     (Uniform phase, randn noise) with numpy-RandomState-seeded constants.
@@ -118,6 +127,14 @@ def _sine_gen_deterministic(
     graph — the property we actually need to compare (this wrapper) against itself
     (the ONNX export of this wrapper) in parity_check.py. Only the sine/noise mixing
     (`sine_waves`) is returned — the caller only needs that, not `uv`/`noise` separately.
+
+    `noise_buffer` (built once in `HiFiGANExportWrapper.__init__`, same seed) is
+    sliced to the real dynamic length rather than drawn fresh here: `torch.tensor(
+    rng.randn(*sine_waves.shape))` reads `.shape` as a plain Python int at trace
+    time and the exporter registers the result as an ONNX constant (see its own
+    TracerWarning), baking the traced sample count into the graph. Slicing a
+    pre-built buffer keeps the same bit-exact-reproducibility property while
+    staying dynamic-length-safe.
     """
     b, _, length = f0.shape
     freq_mat = torch.zeros((b, harmonic_num + 1, length), dtype=f0.dtype, device=f0.device)
@@ -138,13 +155,15 @@ def _sine_gen_deterministic(
 
     uv = (f0 > voiced_threshold).to(f0.dtype)
     noise_amp = uv * noise_std + (1 - uv) * sine_amp / 3
-    noise_sample = torch.tensor(rng.randn(*sine_waves.shape).astype(np.float32))
+    noise_sample = noise_buffer[:, : harmonic_num + 1, :length].expand(b, -1, -1)
     noise = noise_amp * noise_sample
 
     return sine_waves * uv + noise
 
 
-def _source_module_deterministic(x: torch.Tensor, m_source: nn.Module) -> torch.Tensor:
+def _source_module_deterministic(
+    x: torch.Tensor, m_source: nn.Module, noise_buffer: torch.Tensor
+) -> torch.Tensor:
     """Reimplements SourceModuleHnNSF.forward()'s harmonic branch (the only one
     HiFTGenerator.decode() keeps — `s, _, _ = self.m_source(s)` discards the rest)
     using `_sine_gen_deterministic` in place of live SineGen randomness."""
@@ -156,6 +175,7 @@ def _source_module_deterministic(x: torch.Tensor, m_source: nn.Module) -> torch.
         noise_std=sine_gen.noise_std,
         voiced_threshold=sine_gen.voiced_threshold,
         sampling_rate=sine_gen.sampling_rate,
+        noise_buffer=noise_buffer,
     )
     sine_waves = sine_waves.transpose(1, 2)
     return m_source.l_tanh(m_source.l_linear(sine_waves))
@@ -175,6 +195,10 @@ class HiFiGANExportWrapper(nn.Module):
         cos_mat, sin_mat = _inverse_dft_matrices(n_fft, generator.stft_window)
         self.register_buffer("_idft_cos", cos_mat)
         self.register_buffer("_idft_sin", sin_mat)
+        sine_gen = generator.m_source.l_sin_gen
+        rng = np.random.RandomState(_SOURCE_NOISE_SEED)
+        noise_buffer = rng.randn(1, sine_gen.harmonic_num + 1, _NOISE_BUFFER_SAMPLES).astype(np.float32)
+        self.register_buffer("_noise_buffer", torch.from_numpy(noise_buffer))
         # Overlap-add via conv_transpose1d: an n_fft-channel "identity" kernel scatters
         # each windowed frame back to its hop-offset position, summing overlaps for free.
         # (Standard iSTFTNet-style trick; avoids F.fold/col2im, whose ONNX symbolic
@@ -194,7 +218,11 @@ class HiFiGANExportWrapper(nn.Module):
         frames_ct = frames.transpose(1, 2)  # (B, n_fft, T')
         ola = self._overlap_add(frames_ct)
 
-        window_sq = (self.generator.stft_window**2).view(1, self.n_fft, 1).repeat(1, 1, num_frames)
+        # Broadcasting against `frames_ct`'s own dynamic time dim, not `.repeat(1, 1,
+        # num_frames)`: `repeat()` takes plain Python ints, so it bakes the traced
+        # frame count into the graph (see module docstring / ADR-0009 precedent).
+        window_sq_col = (self.generator.stft_window**2).view(1, self.n_fft, 1)
+        window_sq = window_sq_col * torch.ones_like(frames_ct[:, :1, :])
         envelope = self._overlap_add(window_sq)
         ola = ola / torch.clamp(envelope, min=1e-11)
 
@@ -206,7 +234,7 @@ class HiFiGANExportWrapper(nn.Module):
         g = self.generator
         f0 = g.f0_predictor(speech_feat)
         s = g.f0_upsamp(f0[:, None]).transpose(1, 2)
-        s = _source_module_deterministic(s, g.m_source)
+        s = _source_module_deterministic(s, g.m_source, self._noise_buffer)
         s = s.transpose(1, 2)
 
         s_stft_real, s_stft_imag = _stft_onnx(s.squeeze(1), self.n_fft, self.hop_len, g.stft_window)
@@ -253,6 +281,7 @@ def export(out_path: Path, device: str = "cpu") -> Path:
         out_path,
         input_names=["speech_feat"],
         output_names=["waveform"],
+        dynamic_axes={"speech_feat": {2: "frames"}, "waveform": {1: "samples"}},
     )
 
 

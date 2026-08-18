@@ -6,6 +6,50 @@
 
 ---
 
+## 2026-08-18 — VAI-009: fix dynamic-length HiFiGAN export, unblocking VAI-006's end-to-end acceptance criterion
+
+**What changed**: `export/export_hifigan.py`'s `speech_feat` input is now a genuine ONNX dynamic
+axis instead of hard-fixed at 50 mel frames. Two independent trace-baking bugs had to be fixed
+(same category ADR-0009 already documented for the flow-encoder/CAMPPlus exports — a Python-int
+read off a tensor's `.shape` gets baked as an ONNX literal, so the graph only works at the exact
+length it was traced at):
+- `_istft_onnx`'s overlap-add envelope built its window via `.repeat(1, 1, num_frames)`, baking the
+  traced frame count into the envelope regardless of the real (dynamic) input length. Fixed by
+  broadcasting against `frames_ct`'s own dynamic time dim (`window_sq_col * torch.ones_like(...)`)
+  instead of `.repeat(int)`.
+- `_sine_gen_deterministic`'s source noise drew `torch.tensor(rng.randn(*sine_waves.shape))` —
+  `.shape` resolves to plain Python ints at trace time, and the exporter registers the resulting
+  array as a literal ONNX constant (confirmed via the exporter's own `TracerWarning`), baking the
+  traced sample count. Fixed by precomputing one fixed-size deterministic noise buffer (same
+  `_SOURCE_NOISE_SEED`, registered as a module buffer in `HiFiGANExportWrapper.__init__`) and
+  dynamically slicing it to the real length at forward time.
+`export/parity_check.py::check_hifigan` now exercises three frame counts (17/50/123), not just the
+one the original fixed-shape export happened to use — the single-fixed-shape convention is exactly
+what let both bugs ship unnoticed the first time (same lesson ADR-0009 already drew for the other
+two exports).
+
+**How this was found to actually work, not just "look shape-agnostic"**: prototyped in scratch
+space before touching any repo file — a naive fix (add `dynamic_axes=...` alone, no code change)
+exports without error but fails at ONNX Runtime with a broadcast-shape error at any frame count
+other than the traced one, confirming the two bugs above are real, not theoretical. After both
+fixes, verified bit-consistent (eager-vs-ONNX, within `atol=1e-4`) output across frame counts
+1/17/30/50/80/123/200, then ran the real `vocalai --text "hello world" --out out.wav` CLI command
+(VAI-006/VAI-009's own acceptance criterion — previously failed with a shape-mismatch error) and a
+much longer sentence (~7.4s of audio), both producing genuinely non-silent, plausible-duration WAV
+output — manually confirmed audible by the repo owner.
+
+**What was rejected**: a bucketed/fixed-length export (ADR-0009's approach for the flow-encoder/
+CAMPPlus) — unlike those two, HiFiGAN's dynamic-shape bugs are narrowly in this repo's own wrapper
+code (not third-party relative-position-encoding/pooling math), so a real dynamic fix was tractable
+and strictly better (no per-length Rust-side bucket-selection logic needed downstream).
+
+**What's next**: Milestone 6 part B.2 (`--voice` zero-shot cloning) is the only remaining item
+before VAI-006 itself can close. Also worth a closer listen to `watermark.rs`'s resampler-fidelity
+residual risk (`docs/agents/STATUS.md`) now that real, arbitrary-length audio exists to check it
+against.
+
+---
+
 ## 2026-08-18 — fix: stage `tokenizer.json` reproducibly via `export/fetch_tokenizer.py`
 
 **What changed**: Added `export/fetch_tokenizer.py`, a small script that downloads

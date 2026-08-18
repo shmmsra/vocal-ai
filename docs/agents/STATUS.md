@@ -18,9 +18,9 @@
 | 1 — Milestone 4: Export T3 as decoder-with-past, KV-cache decode loop + sampling | ✅ Complete |
 | 1 — Milestone 5: Export PerthNet encoder; STFT/ISTFT/resample watermarking in `watermark.rs` | ✅ Complete |
 | 1 — Milestone 6, part A (VAI-008): Export S3Gen's flow-encoder (bucketed) + CAMPPlus to ONNX | ✅ Complete |
-| 1 — Milestone 6, part B.1 (VAI-006): wire the default-voice pipeline + CLI | 🚫 Blocked (code-complete, `make check` clean; real end-to-end audio blocked on VAI-009) |
+| 1 — Milestone 6, part B.1 (VAI-006): wire the default-voice pipeline + CLI | ✅ Complete (real end-to-end audio verified for arbitrary text, VAI-009 unblocked it) |
 | 1 — Milestone 6, part B.2 (VAI-006): `--voice` zero-shot cloning | 📋 Planned |
-| 1 — VAI-009: re-export HiFiGAN with a dynamic-length `speech_feat` input | 📋 Planned (blocks B.1's acceptance criterion) |
+| 1 — VAI-009: re-export HiFiGAN with a dynamic-length `speech_feat` input | ✅ Complete |
 | 1 — Milestone 7: per-platform packaging (see `docs/phase1-onnx-rust-cli-plan.md` §7) | 📋 Planned |
 
 *Update this table as phases progress. Use ✅ Complete / 🔄 In progress / 📋 Planned / 🚫 Blocked.*
@@ -72,16 +72,18 @@ position-encoding and `seg_pooling` export bugs in the third-party reference cod
 own math). Milestone 6's Rust wiring must pick the right bucket / assemble exactly 400 real frames
 for CAMPPlus — this is load-bearing correctness logic.
 
-**Blocker (VAI-009, found 2026-08-18 wiring VAI-006 part B.1)**: `hifigan.onnx` (Milestone 2) has a
-**hard fixed** `speech_feat` input shape, `(1, 80, 50)`, no `dynamic_axes` at all — not merely an
-internal assumption as `export_hifigan.py`'s own docstring flagged. Every existing parity check
-happens to use exactly 50 frames, so this never surfaced until real variable-length generated mel
-tried to call it. `vocalai --text "hello world" --out out.wav` (VAI-006's own acceptance-criterion
-command) fails with a shape-mismatch error today. A forced-25-generated-token diagnostic run
-(landing exactly on the fixed 50-frame shape) succeeds end-to-end and produces genuine non-silent
-audio, confirming every other piece of the pipeline (tokenizer, T3, S3Gen flow-encoder/Euler loop,
-watermark) is wired correctly — HiFiGAN's fixed shape is the sole blocker. See `docs/issues.md`
-VAI-009 and `docs/CHANGELOG.md`'s 2026-08-18 VAI-006 part B.1 entry for the full diagnostic trail.
+**Resolved (VAI-009, closed 2026-08-18)**: `hifigan.onnx`'s `speech_feat` input used to be **hard
+fixed** at `(1, 80, 50)`, no `dynamic_axes` at all — not merely an internal assumption as
+`export_hifigan.py`'s own docstring used to flag. Two trace-baking bugs (a Python-int read off a
+tensor's `.shape` getting registered as an ONNX literal — same category ADR-0009 already documented
+for the flow-encoder/CAMPPlus exports) were the real cause, not just a missing `dynamic_axes`
+declaration: the overlap-add envelope's `.repeat(1, 1, num_frames)` and the deterministic source
+noise's `torch.tensor(rng.randn(*shape))` both baked the traced length. Both are now built from a
+fixed-size buffer sliced dynamically. `vocalai --text "hello world" --out out.wav` (VAI-006's own
+acceptance-criterion command) now succeeds end-to-end, verified for both short and much-longer
+(~7.4s) text, both producing genuine non-silent audio confirmed audible by the repo owner. See
+`docs/issues.md` VAI-009 and `docs/CHANGELOG.md`'s 2026-08-18 VAI-009 entry for the full diagnostic
+trail.
 
 **CI**: split into two workflows since 2026-08-17 — `.github/workflows/ci.yml` (fast:
 fmt/clippy/`cargo test`/`pytest -m "not parity"`) and `.github/workflows/parity.yml` (real-
@@ -101,17 +103,11 @@ test-py-parity`/`make check`) and must be run manually before committing changes
 
 The next logical work, in priority order. Update at the end of every session.
 
-1. **VAI-009** — re-export HiFiGAN (`export/export_hifigan.py`) with a genuinely dynamic-length
-   `speech_feat` input (fix the overlap-add/output-size math to be shape-driven, not a baked-in
-   Python `int`), and extend `parity_check.py::check_hifigan` to exercise more than one frame
-   count. Blocks VAI-006 part B.1's end-to-end acceptance criterion — see `docs/issues.md`.
-2. Once VAI-009 lands: manually re-verify VAI-006 part B.1 end-to-end for real (arbitrary-length)
-   text — this is also the first point to check `watermark.rs`'s resampler-fidelity residual risk
-   by ear (see STATUS test-counts section above).
-3. Milestone 6, part B.2 (VAI-006) — `--voice` zero-shot cloning: `voice_encoder.rs`,
+1. Milestone 6, part B.2 (VAI-006) — `--voice` zero-shot cloning: `voice_encoder.rs`,
    `s3tokenizer.rs`, `campplus.rs`, the mel-filterbank builder, 16 kHz resample/mel/speaker-
-   embedding preprocessing. See `docs/phase1-onnx-rust-cli-plan.md` §7 Milestone 6.
-4. See `docs/issues.md` for the tracked tickets (`VAI-006`, `VAI-009`).
+   embedding preprocessing. See `docs/phase1-onnx-rust-cli-plan.md` §7 Milestone 6. This is the
+   only remaining item before VAI-006 itself can close.
+2. See `docs/issues.md` for the tracked tickets (`VAI-006`, `VAI-007`).
 
 ---
 
@@ -119,6 +115,7 @@ The next logical work, in priority order. Update at the end of every session.
 
 | Date | Ticket | Summary | Commit |
 |------|--------|---------|--------|
+| 2026-08-18 | VAI-009 | Fix two trace-baking bugs in `export_hifigan.py` so `speech_feat` is a genuine dynamic ONNX axis; extend `check_hifigan` to 3 frame counts — unblocks VAI-006 part B.1's end-to-end acceptance criterion | TBD |
 | 2026-08-18 | VAI-008 | Export S3Gen's flow-encoder (bucketed, ADR-0009) + CAMPPlus (fixed 400-frame window) to ONNX, closing the `mu`/`spks` gap found while starting Milestone 6 | `65b1642` |
 | 2026-08-18 | VAI-005 | Export PerthNet encoder; implement STFT/ISTFT/resample watermarking pipeline (`watermark.rs`); pin `setuptools<81` (real fix for a `pkg_resources` removal breaking `resemble-perth`) | `91c92ea` |
 | 2026-08-18 | — | Add ADR-0008 resolving PerthNet/Chatterbox license question (both MIT) | `1f29052` |

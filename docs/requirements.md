@@ -33,7 +33,9 @@
   only the CFM estimator (Milestone 3) had been exported; nothing produced real `mu`/`spks`. See
   ADR-0009.
 - [ ] Milestone 6, part B (VAI-006): Wire the full pipeline + `clap` CLI; support `--voice`
-  zero-shot cloning
+  zero-shot cloning — part B.1 (default-voice pipeline + CLI) done and verified end-to-end with
+  real, arbitrary-length text (VAI-009 fixed HiFiGAN's ONNX export, which was the last blocker);
+  part B.2 (`--voice` cloning) not started
 - [ ] Milestone 7: Per-platform packaging (macOS/CoreML, Windows/Linux CUDA, CPU fallback)
 
 ---

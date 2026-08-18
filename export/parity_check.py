@@ -60,6 +60,9 @@ def _run_onnx(onnx_path, feeds: dict[str, np.ndarray]) -> list[np.ndarray]:
     return session.run(None, feeds)
 
 
+HIFIGAN_CHECK_FRAME_COUNTS = (17, 50, 123)  # VAI-009: not just the traced 50 — see ADR-0009 precedent
+
+
 def check_hifigan(atol: float, rtol: float) -> ParityResult:
     torch.manual_seed(0)
     wrapper = export_hifigan.build_wrapper()
@@ -67,13 +70,18 @@ def check_hifigan(atol: float, rtol: float) -> ParityResult:
     if not onnx_path.exists():
         export_hifigan.export(onnx_path)
 
-    speech_feat = torch.randn(1, export_hifigan.MEL_CHANNELS, 50)
-    with torch.no_grad():
-        torch_out = wrapper(speech_feat).numpy()
+    passed = True
+    max_diff = 0.0
+    for n_frames in HIFIGAN_CHECK_FRAME_COUNTS:
+        speech_feat = torch.randn(1, export_hifigan.MEL_CHANNELS, n_frames)
+        with torch.no_grad():
+            torch_out = wrapper(speech_feat).numpy()
 
-    (onnx_out,) = _run_onnx(onnx_path, {"speech_feat": speech_feat.numpy()})
-    passed, diff = allclose_report(torch_out, onnx_out, atol, rtol)
-    return ParityResult("hifigan", passed, diff)
+        (onnx_out,) = _run_onnx(onnx_path, {"speech_feat": speech_feat.numpy()})
+        ok, diff = allclose_report(torch_out, onnx_out, atol, rtol)
+        passed = passed and ok
+        max_diff = max(max_diff, diff)
+    return ParityResult("hifigan", passed, max_diff)
 
 
 def check_ve(atol: float, rtol: float) -> ParityResult:

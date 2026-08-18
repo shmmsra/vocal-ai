@@ -238,9 +238,9 @@ also export it on demand if missing).
   with no `models/` directory required.
 
 **Fail indicators**:
-- Any `[FAIL]` line, or `max_abs_diff` far above `1e-4`/`1e-3` (atol/rtol) — check whether
-  `export_s3gen.py`'s example shapes still match `export_hifigan.py`'s fixed `EXAMPLE_FRAMES=50`
-  (the HiFiGAN export has no dynamic frame axis; see its module docstring), or whether
+- Any `[FAIL]` line, or `max_abs_diff` far above `1e-4`/`1e-3` (atol/rtol) — `hifigan.onnx`'s
+  `speech_feat` input is a dynamic axis as of VAI-009, so `export_s3gen.py`'s `EXAMPLE_FRAMES`
+  no longer needs to match any HiFiGAN-side constant; check instead whether
   `parity_check.py::_solve_euler_onnx` still matches `crates/vocalai-core/src/s3gen.rs::solve_euler`
   and `ConditionalCFM.solve_euler`'s CFG-doubling/combination math exactly (see ADR-0004).
 - A Rust `s3gen::` test failure with no `models/` directory present indicates an actual math bug
@@ -435,6 +435,51 @@ unchanged (`torch.load` isn't reachable from Rust), so there is nothing to compa
 
 ---
 
+## ONNX export + parity check: dynamic-length HiFiGAN (VAI-009)
+
+**Test command(s)**:
+```bash
+cd export
+source .venv/bin/activate  # if not already active — see docs/dev-setup.md §2
+
+rm -f ../models/hifigan.onnx   # force a real re-export, not a stale cached graph
+python export_hifigan.py
+python parity_check.py --component hifigan
+```
+
+**Setup**: Same venv/checkpoint as Milestone 2 (`s3gen.safetensors` from `ResembleAI/chatterbox`).
+
+**What to observe**:
+- `export_hifigan.py` prints `Exported HiFiGAN to models/hifigan.onnx` with no traceback.
+- `parity_check.py --component hifigan` prints one `[PASS]`/`[FAIL]` line with `max_abs_diff`.
+- `onnx.load("models/hifigan.onnx").graph.input[0].type.tensor_type.shape.dim` shows a
+  `dim_param` (not a fixed `dim_value`) on `speech_feat`'s time axis — confirms the export is
+  genuinely dynamic, not merely re-baked at a different fixed length.
+
+**Pass criteria**:
+- `export_hifigan.py` exits 0 and produces `models/hifigan.onnx` with a dynamic `speech_feat` time
+  axis.
+- `parity_check.py --component hifigan` exits 0, `[PASS]`, `max_abs_diff` on the order of `5e-5` —
+  this check now exercises three frame counts (`HIFIGAN_CHECK_FRAME_COUNTS = (17, 50, 123)` in
+  `parity_check.py`), not just the one the original fixed-shape export happened to use.
+- `python -m pytest` in `export/` (or `make check`) passes
+  `export/tests/test_parity_check.py::test_hifigan_export_matches_pytorch_reference`.
+- The CLI's own acceptance-criterion command (see the next section) succeeds for arbitrary text,
+  not just text that happens to land on a specific token/frame count.
+
+**Fail indicators**:
+- Any `[FAIL]` line, or an ONNX Runtime broadcast/shape error at any frame count other than the one
+  the graph happened to be traced at — points at a new instance of the same "Python-int-off-`.shape`
+  gets baked as an ONNX constant" bug class this fix addressed (see `export_hifigan.py`'s module
+  docstring: the overlap-add envelope's old `.repeat(1, 1, num_frames)` and the deterministic source
+  noise's old `torch.tensor(rng.randn(*shape))` were both instances of it — ADR-0009 documents the
+  same category of bug in the flow-encoder/CAMPPlus exports).
+- Before trusting a local parity result after touching `export_hifigan.py`, clear
+  `models/hifigan.onnx` first — same stale-cache trap documented in earlier sections; a cached
+  fixed-shape graph from before this fix would otherwise silently mask a regression.
+
+---
+
 ## CLI: default-voice end-to-end synthesis (VAI-006, part B.1)
 
 **Prerequisites**:
@@ -459,48 +504,41 @@ cargo build --release -p vocalai-cli
 ./target/release/vocalai --text "hello world" --out /tmp/out.wav --models-dir models
 ```
 
-**Known-blocked result (VAI-009)**: this exact command currently **fails**:
-```
-error: ONNX Runtime session error: Got invalid dimensions for input: speech_feat for the following indices
- index: 2 Got: 44 Expected: 50
- Please fix either the inputs/outputs or the model.
-```
-This is `hifigan.onnx`'s fixed-50-mel-frame export limitation (see `docs/issues.md` VAI-009), not a
-bug in this session's new code. Until VAI-009 lands, use the diagnostic command below to verify the
-rest of the pipeline instead:
+**Fixed by VAI-009**: this exact command used to fail with a shape-mismatch error
+(`hifigan.onnx`'s ONNX export was hard-fixed at exactly 50 mel frames; see
+`docs/decisions/`/`docs/CHANGELOG.md`'s VAI-009 entry). It now succeeds for arbitrary text.
+Also verified with a much longer sentence (~145 words, ~7.4s of audio) to confirm the fix
+generalizes across frame counts rather than coincidentally matching one:
 ```bash
 ./target/release/vocalai \
-  --text "This is a somewhat longer sentence designed to make sure text to speech generation does not stop too early during this quick diagnostic test." \
-  --out /tmp/out.wav --models-dir models --max-new-tokens 25
+  --text "This is a longer sentence to make sure the dynamic length HiFiGAN export truly generalizes across many different mel frame counts, not just one." \
+  --out /tmp/out_long.wav --models-dir models
 ```
-(`--max-new-tokens 25` forces exactly 25 generated speech tokens when the text is long enough not
-to hit EOS first, so `mel_len2 = 2 * 25 = 50` lands exactly on HiFiGAN's fixed shape.)
 
 **What to observe**:
-- The command prints `Wrote /tmp/out.wav` and exits 0.
-- `/tmp/out.wav` is a mono 24000 Hz 16-bit PCM WAV, ~1.0s long (25 generated tokens * 40ms/token).
-- Inspect programmatically if you can't listen: `python3 -c "import wave; w=wave.open('/tmp/out.wav'); print(w.getnchannels(), w.getframerate(), w.getnframes())"` should print `1 24000 24000`.
+- Both commands print `Wrote <path>` and exit 0 — no `speech_feat` shape-mismatch error.
+- `/tmp/out.wav` is a mono 24000 Hz 16-bit PCM WAV, ~0.9s long; `/tmp/out_long.wav` is ~7.4s long.
+- Inspect programmatically if you can't listen: `python3 -c "import wave; w=wave.open('/tmp/out.wav'); print(w.getnchannels(), w.getframerate(), w.getnframes())"`.
 - The waveform should not be silence/NaN: peak amplitude and RMS should both be clearly nonzero
-  (verified during implementation: peak ~26654/32767, RMS ~4023 on a real run).
+  (verified during implementation: `out.wav` peak ~27933/32767 RMS ~4274; `out_long.wav` peak
+  ~32605/32767 RMS ~3962).
+- Listen to both — this is also the first real chance to sanity-check `watermark.rs`'s
+  resampler-fidelity residual risk by ear (see `docs/agents/STATUS.md`).
 
 **Pass criteria**:
-- The diagnostic (`--max-new-tokens 25`, long text) command exits 0 and produces a non-silent WAV
-  as above.
+- Both commands (short and long text) exit 0 and produce non-silent, audible speech-like WAVs of
+  plausible, different durations.
 - `cargo build --release -p vocalai-cli` succeeds with no warnings.
-- Once VAI-009 lands: the plain `--text "hello world" --out /tmp/out.wav` command (no
-  `--max-new-tokens` override) should also succeed and produce audible, recognizable speech --
-  re-run this section's first command and update this note when that's true.
 
 **Fail indicators**:
 - `error: failed to load models from ...`: a required `.onnx`/`.npy`/`tokenizer.json` file is
   missing from `--models-dir` -- re-check the prerequisites list above.
 - `error: T3 generated no speech tokens for this text`: T3 emitted EOS immediately -- try a longer
   or different input text.
-- `Got invalid dimensions for input: speech_feat ... Expected: 50` at any frame count other than
-  the diagnostic's forced 50: expected until VAI-009 lands (see "Known-blocked result" above); if
-  it still happens *after* VAI-009 lands, that's a regression.
+- `Got invalid dimensions for input: speech_feat ...`: a regression in VAI-009's dynamic-length
+  fix -- see the "ONNX export + parity check: dynamic-length HiFiGAN (VAI-009)" section above.
 - Silence (all-zero samples) or clipped-flat output: a real bug in the T3/S3Gen/HiFiGAN/watermark
-  wiring, not the known VAI-009 limitation -- investigate `pipeline::synthesize`'s tensor assembly.
+  wiring -- investigate `pipeline::synthesize`'s tensor assembly.
 
 ---
 
