@@ -15,6 +15,12 @@
 
 *Keep version pins here in sync with `rust-toolchain.toml` / `export/requirements.txt` once those exist.*
 
+**Windows**: neither `rustup` nor `pyenv` ships with Windows, and no build tool (`make`) is
+preinstalled either. See §3 for the exact install commands and §2 for `pyenv-win` setup
+(it's a separate reimplementation, not a drop-in for `pyenv`). See §10 for known Windows-specific
+gotchas — a `PATH` that doesn't refresh in an already-open shell, and a stale `pyenv-win`
+version cache.
+
 ---
 
 ## 2. Clone and install dependencies
@@ -25,6 +31,23 @@ cd vocal-ai
 
 # Rust workspace:
 cargo fetch
+```
+
+**Windows**: if `cargo` isn't recognized, install the toolchain first (§3), then open a
+*new* shell before running `cargo fetch` — a shell opened before install won't pick up the
+updated `PATH`.
+
+### Python toolchain on Windows (pyenv-win)
+
+`pyenv` (used above) is macOS/Linux-only. On Windows, install
+[pyenv-win](https://github.com/pyenv-win/pyenv-win) instead — it is a separate
+reimplementation with its own CLI quirks, not a drop-in:
+
+```powershell
+Invoke-WebRequest -UseBasicParsing -Uri "https://raw.githubusercontent.com/pyenv-win/pyenv-win/master/pyenv-win/install-pyenv-win.ps1" -OutFile "./install-pyenv-win.ps1"; &"./install-pyenv-win.ps1"
+# open a new shell so PATH picks up pyenv-win, then:
+pyenv install 3.12.4
+pyenv local 3.12.4   # run from the repo root — honors .python-version
 ```
 
 ### Python export/ tooling (dev-time only, not shipped)
@@ -61,10 +84,10 @@ to commit.
 
 | Tool | Purpose | Install |
 |------|---------|---------|
-| `git` | Version control | Pre-installed on macOS/Linux |
-| `make` | Build entry point | `brew install make` / `apt install make` |
-| `cargo` / `rustup` | Rust toolchain + package manager | https://rustup.rs |
-| `python3` / `pip` (3.10+) | Runs `export/` ONNX export + parity-check scripts, in `export/.venv` (§2) | pyenv or system Python |
+| `git` | Version control | Pre-installed on macOS/Linux; Windows: https://git-scm.com or `winget install Git.Git` |
+| `make` | Build entry point | `brew install make` / `apt install make` / Windows: `winget install ezwinports.make` (GnuWin32's `make` package is a stale 3.81 build — prefer `ezwinports.make`, a maintained GNU Make 4.x port) |
+| `cargo` / `rustup` | Rust toolchain + package manager | https://rustup.rs / Windows: `winget install --id Rustlang.Rustup -e`, then open a new shell |
+| `python3` / `pip` (3.10+) | Runs `export/` ONNX export + parity-check scripts, in `export/.venv` (§2) | pyenv or system Python / Windows: [pyenv-win](https://github.com/pyenv-win/pyenv-win) — see §2 |
 
 *Add rows for platform-specific accelerator tooling (e.g. CUDA toolkit for local GPU testing) as Milestone 1+ work lands.*
 
@@ -154,6 +177,8 @@ If any of those steps fails, the local hooks are not installed correctly — re-
 |---------|--------------|-----|
 | `make check` fails on a fresh clone (beyond the known placeholder tests) | This file is stale | Update the install steps above and re-run |
 | Pre-commit hook doesn't run | `make setup-hooks` was never run, or `.git/hooks/pre-commit` isn't executable | `make setup-hooks` |
-| `cargo`/`pytest` not found | Toolchain not installed or not on `PATH` | Re-check §1/§2 |
+| `cargo`/`pytest` not found | Toolchain not installed or not on `PATH` | Re-check §1/§2/§3 (Windows: §3 has `winget` commands) |
+| `cargo`/`make` still "not recognized" immediately after installing it (Windows) | The installer updated `PATH`, but the current shell's environment was cached before install | Open a new PowerShell/terminal window |
+| `pyenv install <version>` on Windows fails with `definition not found` for a version that exists on python.org | pyenv-win's local version cache is stale and `pyenv update` is broken on modern Windows | See the workaround in §2 (Python toolchain on Windows) |
 
 *Add new rows as the team discovers recurring setup gotchas.*
