@@ -1,4 +1,4 @@
-.PHONY: check setup-hooks test typecheck lint build clean help
+.PHONY: check setup-hooks test typecheck lint build clean help export
 
 # ── Help ──────────────────────────────────────────────────────────────────────
 
@@ -13,6 +13,7 @@ help:
 	@echo "  make typecheck     Run cargo check only"
 	@echo "  make lint          Run clippy only"
 	@echo "  make build         Build the project"
+	@echo "  make export        Generate models/*.onnx + *.npy (ARGS=--with-voice-cloning for --voice support)"
 	@echo "  make clean         Remove build artifacts"
 
 # ── Python interpreter selection ──────────────────────────────────────────────
@@ -81,6 +82,18 @@ lint: clippy
 
 build:
 	cargo build --workspace --release
+
+# ── Model artifact generation ─────────────────────────────────────────────────
+# Runs export/'s scripts in the order docs/dev-setup.md §11.1 documents, writing
+# to <repo>/models/ (git-ignored, never committed — see CLAUDE.md §1). Pass
+# ARGS=--with-voice-cloning to also export the two models `--voice` needs.
+
+export:
+ifeq ($(OS),Windows_NT)
+	powershell -ExecutionPolicy Bypass -File scripts\export-all.ps1 $(ARGS)
+else
+	bash scripts/export-all.sh $(ARGS)
+endif
 
 # ── Clean ─────────────────────────────────────────────────────────────────────
 

@@ -219,6 +219,26 @@ These eight steps produce every file `vocalai` loads for default-voice synthesis
 | `export_campplus.py` | `s3gen_spk_embed_affine_weight.npy`, `s3gen_spk_embed_affine_bias.npy` (+ `campplus.onnx`) |
 | `export_default_voice.py` | `default_voice/*.npy` (6 conditioning tensors) |
 
+Run everything with one command — `make export` auto-detects your platform and dispatches to
+`scripts/export-all.sh` (POSIX) or `scripts/export-all.ps1` (Windows), running the eight scripts
+below in order and stopping at the first failure:
+
+```bash
+make export
+```
+
+`export_ve.py` (`ve.onnx`) and `export_s3tokenizer.py` (`s3tokenizer.onnx`) are **not** needed
+for default-voice synthesis — they're only used by the `--voice` zero-shot cloning path
+(Milestone 6 part B.2). Skip them unless you're working on that path; if you are, generate them
+too:
+
+```bash
+make export ARGS=--with-voice-cloning
+```
+
+**Running one script at a time by hand** (e.g. to re-run a single export after a code change),
+instead of the full `make export` sequence:
+
 **macOS / Linux**:
 ```bash
 PY=export/.venv/bin/python
@@ -230,6 +250,9 @@ $PY export/export_hifigan.py
 $PY export/export_perthnet.py
 $PY export/export_campplus.py
 $PY export/export_default_voice.py
+# only if you're working on --voice zero-shot cloning:
+$PY export/export_ve.py
+$PY export/export_s3tokenizer.py
 ```
 
 **Windows (PowerShell)**:
@@ -243,16 +266,10 @@ $py = "export\.venv\Scripts\python.exe"
 & $py export\export_perthnet.py
 & $py export\export_campplus.py
 & $py export\export_default_voice.py
+# only if you're working on --voice zero-shot cloning:
+& $py export\export_ve.py
+& $py export\export_s3tokenizer.py
 ```
-
-> `export_ve.py` (`ve.onnx`) and `export_s3tokenizer.py` (`s3tokenizer.onnx`) are **not** needed
-> for default-voice synthesis — they're only used by the `--voice` zero-shot cloning path
-> (Milestone 6 part B.2). Skip them unless you're working on that path; if you are, also run:
-> ```bash
-> $PY export/export_ve.py
-> $PY export/export_s3tokenizer.py
-> ```
-> (PowerShell: `& $py export\export_ve.py` / `& $py export\export_s3tokenizer.py`.)
 
 ### 11.2 Build the CLI
 

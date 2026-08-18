@@ -6,6 +6,35 @@
 
 ---
 
+## 2026-08-18 — `make export` wrapper script
+
+**What changed**: Added `scripts/export-all.sh` / `scripts/export-all.ps1` and a `make export`
+target (dispatches to whichever script matches `$(OS)`) that runs the eight `export/` scripts
+`docs/dev-setup.md` §11.1 already documented, in the required order, stopping at the first
+failure. `ARGS=--with-voice-cloning` appends `export_ve.py`/`export_s3tokenizer.py` for users who
+want `--voice` zero-shot cloning too. `docs/dev-setup.md` §11.1 now leads with `make export` and
+keeps the old manual per-script commands as a documented fallback for re-running one script in
+isolation.
+
+**Why**: A user who just wants to run `vocalai` locally previously had to copy 8-10 commands by
+hand out of the docs, in the right order, picking the right one of two platform-specific blocks.
+This came up while discussing whether pre-built ONNX/npy artifacts could be published to an
+artifactory for others to use (they technically could be — no machine-identifying content in
+either format — but that's gated on this repo's own "ask before bundling/redistributing model
+weights" rule and a not-yet-written `THIRD_PARTY_LICENSES` file per ADR-0008); the lower-effort
+near-term answer is to make self-generation trivially easy instead of publishing anything.
+
+**What was rejected**: Folding the two voice-cloning-only exports into the default run — kept them
+opt-in behind `--with-voice-cloning` since most users only need default-voice synthesis and those
+two exports add real time/bandwidth (another HuggingFace-cached model each). A CI job to run this
+— out of scope, this is a local dev-convenience script, not a packaging pipeline (that's
+Milestone 7 territory).
+
+**What's next**: Milestone 7 (VAI-007) packaging; a real Windows run of `scripts/export-all.ps1`
+to confirm parity with the POSIX script (read-reviewed but not executed as of this entry).
+
+---
+
 ## 2026-08-18 — VAI-006, part B.2: `--voice` zero-shot cloning
 
 **What changed**: wired `--voice` zero-shot voice cloning into the pipeline, closing VAI-006's last

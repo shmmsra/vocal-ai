@@ -132,6 +132,7 @@ The next logical work, in priority order. Update at the end of every session.
 
 | Date | Ticket | Summary | Commit |
 |------|--------|---------|--------|
+| 2026-08-18 | — | Add `make export` (+ `scripts/export-all.{sh,ps1}`) wrapping the 8-10 `export/` scripts `docs/dev-setup.md` §11.1 documents into one command; `--with-voice-cloning` opt-in for the two extra `--voice`-only exports | _pending_ |
 | 2026-08-18 | VAI-006 | `--voice` zero-shot cloning (part B.2, ADR-0011): `mel.rs`, `voice_encoder.rs`, `s3tokenizer.rs`, `campplus.rs`; `pipeline.rs`'s `DefaultVoice` → `VoiceConditioning` with a `from_reference` constructor. Closes VAI-006. | _pending_ |
 | 2026-08-18 | — | Fix `make check` on Windows/MSVC (ADR-0010): drop `tokenizers`' static-CRT `esaxx_fast` to resolve the `LNK2038` CRT mismatch; make the `test-py*` Makefile recipes `cmd.exe`-portable via `$(OS)`/`$(wildcard)` | _pending_ |
 | 2026-08-18 | VAI-009 | Fix two trace-baking bugs in `export_hifigan.py` so `speech_feat` is a genuine dynamic ONNX axis; extend `check_hifigan` to 3 frame counts — unblocks VAI-006 part B.1's end-to-end acceptance criterion | `9ff4b4e` |

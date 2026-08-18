@@ -633,4 +633,54 @@ make check
 
 ---
 
+### Export pipeline: `make export` wrapper script
+
+**Test command(s)** (from repo root):
+
+```bash
+make help                              # confirm the new line is listed
+make export                            # default-voice path, 8 scripts
+make export ARGS=--with-voice-cloning  # + ve.onnx/s3tokenizer.onnx for --voice
+```
+
+**Setup**:
+- `export/.venv` installed per `docs/dev-setup.md` §2 (the script errors out with a clear message
+  if it's missing, rather than falling back to system Python).
+
+**What to observe**:
+- `make help` lists `make export`.
+- `make export` prints one `→ Running export/<script>.py...` line per script, in the §11.1 order
+  (`fetch_tokenizer.py`, `export_t3.py`, `export_s3gen.py`, `export_s3gen_flow_encoder.py`,
+  `export_hifigan.py`, `export_perthnet.py`, `export_campplus.py`, `export_default_voice.py`),
+  then `✓ All model artifacts generated in <repo>/models/`.
+- `make export ARGS=--with-voice-cloning` runs the same 8 plus `export_ve.py`/
+  `export_s3tokenizer.py` at the end.
+- An unrecognized flag (e.g. `bash scripts/export-all.sh --bogus`) fails fast with
+  `error: unknown argument '--bogus' (expected --with-voice-cloning)` and a nonzero exit, before
+  running anything.
+
+**Pass criteria**:
+- Both invocations exit 0 and populate `models/` with the full artifact set (cross-check against
+  the table in `docs/dev-setup.md` §11.1).
+- The Windows path (`scripts\export-all.ps1`, dispatched automatically by `make export` when
+  `$(OS)` is `Windows_NT`) behaves identically — same flag, same script order, same error text.
+  This needs a real Windows run to confirm; it has only been read-reviewed against the POSIX
+  script, not executed, as of this writing.
+
+**Fail indicators**:
+- `error: ... not found — set up the export venv first`: `export/.venv` doesn't exist yet or was
+  built with a different interpreter path than `export/.venv/bin/python` (POSIX) /
+  `export\.venv\Scripts\python.exe` (Windows).
+- Any script's own failure (e.g. a HuggingFace download error, an ONNX export bug) aborts the
+  whole sequence immediately (`set -euo pipefail` / `$ErrorActionPreference = "Stop"`) rather than
+  continuing past a broken artifact.
+
+**Verified during implementation (2026-08-18)**: `make export` and
+`make export ARGS=--with-voice-cloning` were both run end-to-end on macOS and completed
+successfully, regenerating every artifact under `models/` (including a real T3 export). The bad-arg
+path (`bash scripts/export-all.sh --bogus`) was also run and failed as expected. The `.ps1` variant
+has not yet been executed on Windows — pending a follow-up manual run.
+
+---
+
 *Add new sections below this line as features land. Group by feature area (e.g. CLI, export pipeline, EP selection, voice cloning).*
