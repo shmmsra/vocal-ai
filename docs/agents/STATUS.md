@@ -18,20 +18,28 @@
 | 1 — Milestone 4: Export T3 as decoder-with-past, KV-cache decode loop + sampling | ✅ Complete |
 | 1 — Milestone 5: Export PerthNet encoder; STFT/ISTFT/resample watermarking in `watermark.rs` | ✅ Complete |
 | 1 — Milestone 6, part A (VAI-008): Export S3Gen's flow-encoder (bucketed) + CAMPPlus to ONNX | ✅ Complete |
-| 1 — Milestone 6, part B (VAI-006): wire the full pipeline + CLI | 📋 Planned |
+| 1 — Milestone 6, part B.1 (VAI-006): wire the default-voice pipeline + CLI | 🚫 Blocked (code-complete, `make check` clean; real end-to-end audio blocked on VAI-009) |
+| 1 — Milestone 6, part B.2 (VAI-006): `--voice` zero-shot cloning | 📋 Planned |
+| 1 — VAI-009: re-export HiFiGAN with a dynamic-length `speech_feat` input | 📋 Planned (blocks B.1's acceptance criterion) |
 | 1 — Milestone 7: per-platform packaging (see `docs/phase1-onnx-rust-cli-plan.md` §7) | 📋 Planned |
 
 *Update this table as phases progress. Use ✅ Complete / 🔄 In progress / 📋 Planned / 🚫 Blocked.*
 
-**Current test counts**: 29 real Rust tests (`crates/vocalai-core/src/session.rs`'s EP-ordering
+**Current test counts**: 53 real Rust tests (`crates/vocalai-core/src/session.rs`'s EP-ordering
 coverage — 2 under default features, +1 more under `--features coreml` — `s3gen.rs`'s 5
-Euler-loop/CFG-math tests, `t3.rs`'s 14 KV-cache-loop/sampling-math tests (CFG combine,
-repetition penalty, temperature, min-p, top-p, greedy/multinomial selection, embedding-table
-lookup, `.npy` round-trip, end-to-end synthetic decode loop), and `watermark.rs`'s 7
-STFT/ISTFT/resample tests (Hann-window values, reflect-pad convention, dB normalize/denormalize
-round-trip, a synthetic-signal STFT→ISTFT round trip, resample duration preservation, an
-identity-encoder end-to-end `apply_watermark` round trip, and encoder-error propagation), all pure
-`ndarray`/DSP math with no ONNX Runtime session or model file needed) + 12 real Python tests in
+Euler-loop/CFG-math tests plus 10 new Milestone-6 tests (bucket selection, token padding, valid-
+prefix slicing, `cond` assembly, noise-shape sampling, speaker-embedding normalize+affine),
+`t3.rs`'s 14 KV-cache-loop/sampling-math tests (CFG combine, repetition penalty, temperature,
+min-p, top-p, greedy/multinomial selection, embedding-table lookup, `.npy` round-trip, end-to-end
+synthetic decode loop) plus 2 new speech-token-filter tests, `tokenizer.rs`'s 10 new tests
+(`punc_norm` verified line-for-line against the live Python reference including its double-space
+punctuation quirk, plus CFG-doubling/sot-eot padding), `audio.rs`'s 2 new WAV round-trip tests, and
+`watermark.rs`'s 7 STFT/ISTFT/resample tests (Hann-window values, reflect-pad convention, dB
+normalize/denormalize round-trip, a synthetic-signal STFT→ISTFT round trip, resample duration
+preservation, an identity-encoder end-to-end `apply_watermark` round trip, and encoder-error
+propagation), all pure `ndarray`/DSP/string math with no ONNX Runtime session or model file needed
+except `tokenizer.rs`'s `TextTokenizer::from_file` path, not unit-tested against a live
+`tokenizer.json`) + 12 real Python tests in
 `export/` (`test_requirements.py` checks `export/requirements.txt` pins; `test_parity_check.py`
 covers the `_common.allclose_report` comparison helper plus end-to-end ONNX-vs-PyTorch parity for
 HiFiGAN, the voice encoder, the S3 tokenizer, the S3Gen flow estimator (mel→waveform, chained
@@ -64,6 +72,17 @@ position-encoding and `seg_pooling` export bugs in the third-party reference cod
 own math). Milestone 6's Rust wiring must pick the right bucket / assemble exactly 400 real frames
 for CAMPPlus — this is load-bearing correctness logic.
 
+**Blocker (VAI-009, found 2026-08-18 wiring VAI-006 part B.1)**: `hifigan.onnx` (Milestone 2) has a
+**hard fixed** `speech_feat` input shape, `(1, 80, 50)`, no `dynamic_axes` at all — not merely an
+internal assumption as `export_hifigan.py`'s own docstring flagged. Every existing parity check
+happens to use exactly 50 frames, so this never surfaced until real variable-length generated mel
+tried to call it. `vocalai --text "hello world" --out out.wav` (VAI-006's own acceptance-criterion
+command) fails with a shape-mismatch error today. A forced-25-generated-token diagnostic run
+(landing exactly on the fixed 50-frame shape) succeeds end-to-end and produces genuine non-silent
+audio, confirming every other piece of the pipeline (tokenizer, T3, S3Gen flow-encoder/Euler loop,
+watermark) is wired correctly — HiFiGAN's fixed shape is the sole blocker. See `docs/issues.md`
+VAI-009 and `docs/CHANGELOG.md`'s 2026-08-18 VAI-006 part B.1 entry for the full diagnostic trail.
+
 **CI**: split into two workflows since 2026-08-17 — `.github/workflows/ci.yml` (fast:
 fmt/clippy/`cargo test`/`pytest -m "not parity"`) and `.github/workflows/parity.yml` (real-
 checkpoint ONNX-vs-PyTorch tests, `pytest -m "parity and not heavy_build"` — 7 of the 8:
@@ -82,12 +101,17 @@ test-py-parity`/`make check`) and must be run manually before committing changes
 
 The next logical work, in priority order. Update at the end of every session.
 
-1. Milestone 6, part B (VAI-006) — wire the full pipeline (tokenizer → T3 → S3Gen → HiFiGAN →
-   watermark → WAV) in `vocalai-core`, plus the `clap` CLI in `vocalai-cli` (see
-   `docs/phase1-onnx-rust-cli-plan.md` §7, milestone 6, and ADR-0009 for the export-gap context
-   part A closed). This is also the first point real end-to-end audio exists to manually verify
-   `watermark.rs`'s resampler-fidelity residual risk (see STATUS test-counts section above).
-2. See `docs/issues.md` for the tracked ticket (`VAI-006`).
+1. **VAI-009** — re-export HiFiGAN (`export/export_hifigan.py`) with a genuinely dynamic-length
+   `speech_feat` input (fix the overlap-add/output-size math to be shape-driven, not a baked-in
+   Python `int`), and extend `parity_check.py::check_hifigan` to exercise more than one frame
+   count. Blocks VAI-006 part B.1's end-to-end acceptance criterion — see `docs/issues.md`.
+2. Once VAI-009 lands: manually re-verify VAI-006 part B.1 end-to-end for real (arbitrary-length)
+   text — this is also the first point to check `watermark.rs`'s resampler-fidelity residual risk
+   by ear (see STATUS test-counts section above).
+3. Milestone 6, part B.2 (VAI-006) — `--voice` zero-shot cloning: `voice_encoder.rs`,
+   `s3tokenizer.rs`, `campplus.rs`, the mel-filterbank builder, 16 kHz resample/mel/speaker-
+   embedding preprocessing. See `docs/phase1-onnx-rust-cli-plan.md` §7 Milestone 6.
+4. See `docs/issues.md` for the tracked tickets (`VAI-006`, `VAI-009`).
 
 ---
 

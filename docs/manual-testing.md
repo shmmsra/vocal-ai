@@ -435,4 +435,73 @@ unchanged (`torch.load` isn't reachable from Rust), so there is nothing to compa
 
 ---
 
+## CLI: default-voice end-to-end synthesis (VAI-006, part B.1)
+
+**Prerequisites**:
+- All Milestone 2/3/4/5/8 exports present in `models/` (`hifigan.onnx`, `ve.onnx` -- not used by
+  this path but harmless if absent is not true, see below --, `s3gen_estimator.onnx`,
+  `s3gen_flow_encoder_{200,400,600,800,1000,1200}.onnx`, `campplus.onnx` -- not used by this path
+  either --, `s3gen_spk_embed_affine_{weight,bias}.npy`, `t3_cond_prefill.onnx`, `t3_decoder.onnx`,
+  `t3_speech_emb.npy`, `t3_speech_pos_emb.npy`, `perthnet_encoder.onnx`, `models/default_voice/*.npy`
+  -- see VAI-008's manual-testing section above for how to produce all of these).
+- **`models/tokenizer.json`** -- not a model export (no ONNX graph, no parity check: it's already
+  the exact file format the Rust `tokenizers` crate reads directly). Staged by
+  `export/fetch_tokenizer.py`, which downloads it from `ResembleAI/chatterbox` on the HuggingFace
+  Hub and copies it to `models/tokenizer.json`:
+  ```bash
+  cd export && python fetch_tokenizer.py
+  ```
+
+**Test command(s)**:
+```bash
+cd export && python fetch_tokenizer.py && cd ..   # stages models/tokenizer.json, see prerequisites
+cargo build --release -p vocalai-cli
+./target/release/vocalai --text "hello world" --out /tmp/out.wav --models-dir models
+```
+
+**Known-blocked result (VAI-009)**: this exact command currently **fails**:
+```
+error: ONNX Runtime session error: Got invalid dimensions for input: speech_feat for the following indices
+ index: 2 Got: 44 Expected: 50
+ Please fix either the inputs/outputs or the model.
+```
+This is `hifigan.onnx`'s fixed-50-mel-frame export limitation (see `docs/issues.md` VAI-009), not a
+bug in this session's new code. Until VAI-009 lands, use the diagnostic command below to verify the
+rest of the pipeline instead:
+```bash
+./target/release/vocalai \
+  --text "This is a somewhat longer sentence designed to make sure text to speech generation does not stop too early during this quick diagnostic test." \
+  --out /tmp/out.wav --models-dir models --max-new-tokens 25
+```
+(`--max-new-tokens 25` forces exactly 25 generated speech tokens when the text is long enough not
+to hit EOS first, so `mel_len2 = 2 * 25 = 50` lands exactly on HiFiGAN's fixed shape.)
+
+**What to observe**:
+- The command prints `Wrote /tmp/out.wav` and exits 0.
+- `/tmp/out.wav` is a mono 24000 Hz 16-bit PCM WAV, ~1.0s long (25 generated tokens * 40ms/token).
+- Inspect programmatically if you can't listen: `python3 -c "import wave; w=wave.open('/tmp/out.wav'); print(w.getnchannels(), w.getframerate(), w.getnframes())"` should print `1 24000 24000`.
+- The waveform should not be silence/NaN: peak amplitude and RMS should both be clearly nonzero
+  (verified during implementation: peak ~26654/32767, RMS ~4023 on a real run).
+
+**Pass criteria**:
+- The diagnostic (`--max-new-tokens 25`, long text) command exits 0 and produces a non-silent WAV
+  as above.
+- `cargo build --release -p vocalai-cli` succeeds with no warnings.
+- Once VAI-009 lands: the plain `--text "hello world" --out /tmp/out.wav` command (no
+  `--max-new-tokens` override) should also succeed and produce audible, recognizable speech --
+  re-run this section's first command and update this note when that's true.
+
+**Fail indicators**:
+- `error: failed to load models from ...`: a required `.onnx`/`.npy`/`tokenizer.json` file is
+  missing from `--models-dir` -- re-check the prerequisites list above.
+- `error: T3 generated no speech tokens for this text`: T3 emitted EOS immediately -- try a longer
+  or different input text.
+- `Got invalid dimensions for input: speech_feat ... Expected: 50` at any frame count other than
+  the diagnostic's forced 50: expected until VAI-009 lands (see "Known-blocked result" above); if
+  it still happens *after* VAI-009 lands, that's a regression.
+- Silence (all-zero samples) or clipped-flat output: a real bug in the T3/S3Gen/HiFiGAN/watermark
+  wiring, not the known VAI-009 limitation -- investigate `pipeline::synthesize`'s tensor assembly.
+
+---
+
 *Add new sections below this line as features land. Group by feature area (e.g. CLI, export pipeline, EP selection, voice cloning).*

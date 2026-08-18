@@ -4,12 +4,17 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-ort = { version = "=2.0.0-rc.13", features = ["ndarray"] }
+ort = { version = "=2.0.0-rc.13", features = ["ndarray", "tracing"] }
 ndarray = "0.17"
 ndarray-npy = { version = "0.10", default-features = false }
 rand = "0.8"
 realfft = "3.5.0"
 rubato = "5.0.0"
+tokenizers = "0.23.1"
+hound = "3.5.1"
+rand_distr = "0.4"
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 
 [features]
 default = []

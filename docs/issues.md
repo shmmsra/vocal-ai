@@ -44,20 +44,50 @@ Tickets use the prefix `VAI-NNN`, numbered sequentially (e.g. `VAI-001`, `VAI-00
 
 ## Open Issues
 
-### VAI-006 · P2 · OPEN · Milestone 6
+### VAI-006 · P2 · IN PROGRESS (session 2026-08-18) · Milestone 6
 **Wire full pipeline in vocalai-core + clap CLI in vocalai-cli**
 
 **Acceptance criteria**:
-- [ ] Full pipeline wired in `vocalai-core` (tokenizer → T3 → S3Gen → HiFiGAN → watermark → WAV)
-- [ ] `vocalai-cli` clap CLI implements flags per plan §3 (`--text`, `--voice`, `--exaggeration`, `--cfg-weight`, `--temperature`, `--repetition-penalty`, `--min-p`, `--top-p`, `--max-new-tokens`, `--out`)
-- [ ] `--voice` zero-shot cloning: 16 kHz resample + mel + speaker embedding preprocessing
-- [ ] Built-in default voice used when `--voice` is omitted
-- [ ] `vocalai --text "hello world" --out out.wav` produces audible, correct 24 kHz speech
-- [ ] Docs updated (CHANGELOG, STATUS, manual-testing)
+- [x] Full pipeline wired in `vocalai-core` (tokenizer → T3 → S3Gen → HiFiGAN → watermark → WAV) — default-voice path (part B.1)
+- [x] `vocalai-cli` clap CLI implements flags per plan §3 (`--text`, `--voice`, `--exaggeration`, `--cfg-weight`, `--temperature`, `--repetition-penalty`, `--min-p`, `--top-p`, `--max-new-tokens`, `--out`)
+- [ ] `--voice` zero-shot cloning: 16 kHz resample + mel + speaker embedding preprocessing (part B.2, not started — flag exists, returns a clear "not implemented" error)
+- [x] Built-in default voice used when `--voice` is omitted
+- [ ] `vocalai --text "hello world" --out out.wav` produces audible, correct 24 kHz speech — **blocked by VAI-009** (HiFiGAN's fixed-50-frame ONNX export); confirmed every other stage works via a forced-25-generated-token diagnostic run (see `docs/CHANGELOG.md` this date)
+- [x] Docs updated (CHANGELOG, STATUS, manual-testing, this ticket)
 
-**Notes**: Depends on `VAI-005` and now also `VAI-008` (a real S3Gen export gap found while starting
-this ticket — see `VAI-008` below and ADR-0009). See `docs/phase1-onnx-rust-cli-plan.md` §7
-Milestone 6 and §8 Verification/Exit Criteria (end-to-end, voice cloning).
+**Notes**: Depends on `VAI-005` and `VAI-008` (closed). Part B.1 (default-voice pipeline + CLI) is
+code-complete and `make check`-clean as of 2026-08-18, but real end-to-end audio for arbitrary text
+is blocked on `VAI-009` below. Part B.2 (`--voice` cloning: `voice_encoder.rs`, `s3tokenizer.rs`,
+`campplus.rs`, the mel-filterbank builder) has not been started. See
+`docs/phase1-onnx-rust-cli-plan.md` §7 Milestone 6 and §8 Verification/Exit Criteria (end-to-end,
+voice cloning).
+
+---
+
+### VAI-009 · P1 · OPEN · Milestone 6 (blocks VAI-006's end-to-end acceptance criterion)
+**HiFiGAN's ONNX export is fixed at exactly 50 mel frames — needs a dynamic-length re-export**
+
+**Acceptance criteria**:
+- [ ] `export/export_hifigan.py` re-exports `hifigan.onnx` with a genuinely dynamic-length
+      `speech_feat` input (the overlap-add/output-size math must become shape-driven, not a baked-in
+      Python `int` from the tracing example — same category of fix ADR-0009 already made for the
+      flow-encoder/CAMPPlus)
+- [ ] `export/parity_check.py::check_hifigan` exercises more than one frame count (the current
+      single-fixed-shape convention is exactly what let this slip through — see `docs/decisions/
+      0009-s3gen-flow-encoder-and-campplus-export.md`'s precedent for the same category of gap)
+- [ ] `vocalai --text "hello world" --out out.wav` (VAI-006's own acceptance-criterion command)
+      succeeds end-to-end without a shape-mismatch error
+
+**Notes**: Discovered 2026-08-18 while manually testing VAI-006 part B.1's real pipeline against
+the already-exported `models/` directory: `onnx.load("models/hifigan.onnx").graph.input` shows
+`speech_feat` as a fully static `(1, 80, 50)` (no `dim_param`), not merely internally
+length-assuming as `export_hifigan.py`'s own docstring flagged ("KNOWN LIMITATION ... follow-up
+work before Milestone 6"). Every existing parity check (`check_hifigan`, `check_s3gen`) happens to
+use exactly 50 frames, so nothing ever exercised a different length before real variable-length
+generated mel (VAI-006 part B.1) tried to call it. A forced 25-generated-token run (`mel_len2 =
+2*25 = 50`, landing exactly on the fixed shape) runs the *entire* pipeline successfully end-to-end
+and produces genuine non-silent audio — confirming this is the only blocker, not a deeper bug. See
+`docs/CHANGELOG.md`'s 2026-08-18 VAI-006 part B.1 entry for the full diagnostic trail.
 
 ---
 

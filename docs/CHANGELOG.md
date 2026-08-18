@@ -6,6 +6,80 @@
 
 ---
 
+## 2026-08-18 — fix: stage `tokenizer.json` reproducibly via `export/fetch_tokenizer.py`
+
+**What changed**: Added `export/fetch_tokenizer.py`, a small script that downloads
+`tokenizer.json` from `ResembleAI/chatterbox` on the HuggingFace Hub (via `hf_hub_download`, same
+pattern as every other `_common.py` loader) and copies it to `models/tokenizer.json`. Found while
+manually testing VAI-006 part B.1: every other artifact under `models/` (the `.onnx` exports, the
+default-voice `.npy` dump) is produced by some `export/*.py` script, but nothing fetched
+`tokenizer.json` — it needs no ONNX conversion (the Rust `tokenizers` crate reads the HuggingFace
+file format directly), so it was missing from the export toolchain entirely. A from-scratch
+`models/` build was silently missing this file; the gap was masked this session by manually
+copying it out of the local `huggingface_hub` cache, which isn't reproducible from a clean clone.
+
+**Why not folded into `export_default_voice.py` or `_common.py`**: kept as its own script/command
+(`python fetch_tokenizer.py`) rather than a side effect of an unrelated export, since it isn't a
+model export and has no parity check to run — matches `export_default_voice.py`'s own precedent of
+being a separate, purpose-named script for a non-ONNX asset.
+
+**What's next**: none — this was a small, mechanical toolchain gap, not deferred work.
+
+---
+
+## 2026-08-18 — VAI-006 part B.1: wire the default-voice pipeline + CLI (blocked on a newly-found HiFiGAN export gap)
+
+**What changed**: Implemented the default-voice half of Milestone 6's full pipeline (part B.1 of
+VAI-006; `--voice` zero-shot cloning is B.2, not started). New: `tokenizer.rs` (`tokenizers`-crate
+wrapper + `punc_norm`/CFG-doubling/sot-eot padding matching `chatterbox/tts.py::generate` exactly,
+verified against the live Python reference including its double-space punctuation quirk),
+`audio.rs` (WAV writing only, `hound`), `pipeline.rs` (`ModelBundle` + `synthesize()` orchestrator
+wiring tokenizer → T3 → S3Gen → HiFiGAN → watermark), and real `session::build_session` (registers
+`execution_providers()` on a live session; `ort`'s `tracing` feature + a minimal
+`tracing-subscriber` make its internal EP-registration warnings visible instead of silently
+compiled out — the practical form "log a silent CPU fallback" can take given `ort`
+2.0.0-rc.13 has no queryable "which EP actually ran" API). `s3gen.rs` gained the *upstream* wiring
+VAI-008 exported but nothing yet drove: bucket selection/padding over `TOKEN_BUCKETS`, the
+mandatory post-encoder slice to the real valid prefix (ADR-0009), `cond`/mask/noise-init tensor
+assembly matching `flow.py::CausalMaskedDiffWithXvec.inference`, and the speaker-embedding
+normalize+affine hand-roll. `t3.rs` gained one small filter helper
+(`filter_valid_speech_tokens`, matching `tts.py`'s `speech_tokens[speech_tokens < 6561]`) — no loop
+math changes. `vocalai-cli` is a real `clap` CLI now (all plan §3 flags); `--voice` exists but
+returns a clear "not implemented yet" error rather than silently using the default voice. New
+Cargo deps: `tokenizers`, `hound`, `rand_distr` (0.4, pinned for `rand` 0.8 compatibility — 0.6
+pulls in `rand` 0.9), `clap`, `tracing`/`tracing-subscriber`.
+
+**Blocking discovery (new, not yet fixed — see `docs/issues.md` VAI-009)**: running the real CLI
+against the already-exported `models/` directory surfaced that `hifigan.onnx` (Milestone 2,
+`export_hifigan.py`) has a **hard fixed input shape** — `speech_feat` is `(1, 80, 50)` with no
+`dynamic_axes` at all, not just an internal `output_size` assumption as that script's own docstring
+flagged ("KNOWN LIMITATION ... follow-up work before Milestone 6"). Every `check_hifigan`/
+`check_s3gen` parity test happens to use exactly 50 frames, so this never surfaced until real
+variable-length generated mel (this session's new code) tried to call it. Confirmed via
+`onnx.load(...).graph.input` (static dims, no `dim_param`) and by running the CLI: `--text "hello
+world"` (the plan's own acceptance-criterion command) fails with `Got invalid dimensions ... Got:
+44 Expected: 50`. Forcing exactly 25 generated tokens (`--max-new-tokens 25` against text long
+enough not to hit EOS first, so `mel_len2 = 2*25 = 50` lands exactly on the fixed shape) *does* run
+the full chain successfully end-to-end — T3 decode, flow-encoder bucket call, Euler loop, HiFiGAN,
+watermark, WAV write — producing a real 1.0s 24kHz waveform (peak ~26654/32767, RMS ~4023, not
+silence/NaN/garbage). This confirms every piece built this session is wired correctly; the sole
+blocker is HiFiGAN's fixed-50-frame export. Fixing it (a dynamic-length re-export + a parity check
+that exercises more than one frame count, the same category of fix ADR-0009 already made for the
+flow-encoder/CAMPPlus) is `export/export_hifigan.py` work — an ONNX-export-boundary change needing
+its own plan and approval, out of this session's authorized B.1 file list, so left for a follow-up
+session (VAI-009) rather than done opportunistically here.
+
+**What was rejected**: fixing `export_hifigan.py` inline to unblock the manual test — rejected
+because it's an unplanned, unapproved change to the ONNX export boundary (`CLAUDE.md` §0), and
+`docs/agents/CONVENTIONS.md` §3 requires a passing parity check before any export change ships,
+which a same-session drive-by fix couldn't responsibly clear.
+
+**What's next**: VAI-009 (re-export HiFiGAN with a genuinely dynamic-length overlap-add + a parity
+check exercising multiple frame counts), then VAI-006 part B.1 can be manually verified end-to-end
+for real (arbitrary-length) text before B.2 (`--voice` cloning) starts.
+
+---
+
 ## 2026-08-18 — VAI-008: Export S3Gen's flow encoder + CAMPPlus to ONNX (closes a gap found starting Milestone 6)
 
 **What changed**: Starting Milestone 6 (VAI-006 — wire the full pipeline), a source read of

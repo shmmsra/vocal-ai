@@ -7,10 +7,18 @@
 //! `ort::session::builder::SessionBuilder` moves on to the next entry in the
 //! list instead of erroring out.
 //!
-//! This module only builds the ordered EP list; it does not yet create or run
-//! a session. Detecting *which* EP a session actually used (to log a silent
-//! CPU fallback) requires a live session against a loaded model, which lands
-//! in Milestone 6 (`docs/issues.md` VAI-006) when the full pipeline is wired up.
+//! Milestone 6 (`docs/issues.md` VAI-006) adds [`build_session`], the live-session
+//! half: it registers [`execution_providers`]'s list on a real `SessionBuilder` and
+//! commits a model file. Detecting *which* EP a session actually used isn't exposed
+//! as a queryable API by `ort` 2.0.0-rc.13 -- `ExecutionProviderDispatch::fail_silently`
+//! (the hard constraint this module enforces) causes EP registration failures to be
+//! swallowed at the Rust level, only surfacing via `ort`'s own internal `tracing`
+//! calls (`ort::ep::apply_execution_providers`'s `crate::error!`/`crate::warning!` in
+//! its source). [`build_session`] enables `ort`'s `tracing` Cargo feature (see
+//! `Cargo.toml`) and installs a minimal `tracing-subscriber` (once, process-wide) so
+//! those warnings actually reach stderr instead of being compiled out -- the
+//! practical form "log any silent CPU fallback" can take without a queryable
+//! provider-introspection API to build on.
 
 #[cfg(feature = "coreml")]
 use ort::ep::coreml::CoreML;
@@ -18,6 +26,9 @@ use ort::ep::cpu::CPU;
 #[cfg(feature = "cuda")]
 use ort::ep::cuda::CUDA;
 use ort::ep::ExecutionProviderDispatch;
+use ort::session::Session;
+use std::path::Path;
+use std::sync::Once;
 
 /// Execution providers to register on a session, in fallback order:
 /// hardware EPs first (as enabled by Cargo features), CPU always last.
@@ -36,6 +47,29 @@ pub fn execution_providers() -> Vec<ExecutionProviderDispatch> {
     eps.push(CPU::default().build().fail_silently());
 
     eps
+}
+
+static INIT_LOGGING: Once = Once::new();
+
+/// Installs a process-wide `tracing-subscriber` (stderr, `warn`-level by default,
+/// overridable via `RUST_LOG`) exactly once, so `ort`'s internal EP-registration
+/// warnings (see module docs) are actually visible instead of silently compiled out.
+fn init_logging() {
+    INIT_LOGGING.call_once(|| {
+        let filter = tracing_subscriber::EnvFilter::try_from_default_env()
+            .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("warn"));
+        let _ = tracing_subscriber::fmt().with_env_filter(filter).try_init();
+    });
+}
+
+/// Builds a live `ort::Session` from an ONNX model file, registering
+/// [`execution_providers`]'s hardware-EPs-before-CPU fallback list. See module docs
+/// for how (and the limits of how) a silent CPU fallback gets logged.
+pub fn build_session(model_path: &Path) -> ort::Result<Session> {
+    init_logging();
+    Session::builder()?
+        .with_execution_providers(execution_providers())?
+        .commit_from_file(model_path)
 }
 
 #[cfg(test)]

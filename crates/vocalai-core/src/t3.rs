@@ -253,6 +253,20 @@ pub fn generate_speech_tokens<E>(
     Ok(predicted)
 }
 
+/// `speech_tokens[speech_tokens < 6561]` (`chatterbox/tts.py::generate`, applied
+/// twice there via `drop_invalid_tokens` then again inline -- both filters are
+/// identical, so this is the one Rust equivalent). Drops the trailing
+/// [`STOP_SPEECH_TOKEN`] (and any other id `>= `[`START_SPEECH_TOKEN`], though none
+/// besides EOS ever appear in [`generate_speech_tokens`]'s output) before the tokens
+/// are fed into S3Gen.
+pub fn filter_valid_speech_tokens(tokens: &[i64]) -> Vec<i64> {
+    tokens
+        .iter()
+        .copied()
+        .filter(|&t| t < START_SPEECH_TOKEN)
+        .collect()
+}
+
 fn last_step_logits(logits: &Array3<f32>) -> Array2<f32> {
     let last = logits.shape()[1] - 1;
     logits.index_axis(Axis(1), last).to_owned()
@@ -521,5 +535,17 @@ mod tests {
         .unwrap();
 
         assert_eq!(result, vec![5, STOP_SPEECH_TOKEN]);
+    }
+
+    #[test]
+    fn filter_valid_speech_tokens_drops_stop_token() {
+        let out = filter_valid_speech_tokens(&[5, 10, STOP_SPEECH_TOKEN]);
+        assert_eq!(out, vec![5, 10]);
+    }
+
+    #[test]
+    fn filter_valid_speech_tokens_keeps_all_when_no_special_tokens_present() {
+        let out = filter_valid_speech_tokens(&[0, 1, 6560]);
+        assert_eq!(out, vec![0, 1, 6560]);
     }
 }
