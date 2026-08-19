@@ -59,6 +59,26 @@ Tickets use the prefix `VAI-NNN`, numbered sequentially (e.g. `VAI-001`, `VAI-00
 
 ---
 
+### VAI-010 · P3 · OPEN · Docs
+**Split `docs/dev-setup.md` into a dev-setup doc and a usage doc, once there's a real end-user usage story**
+
+**Acceptance criteria**:
+- [ ] `docs/dev-setup.md` keeps §1–8 (toolchain, clone, hooks, `make check`, IDE, agent-workflow
+      verification, troubleshooting) — pure contributor onboarding.
+- [ ] A new doc (e.g. `docs/usage.md`) takes §9 (generate model artifacts, build the CLI,
+      synthesize speech, tuning flags) and anything else that's about *running* `vocalai` rather
+      than *contributing to* it.
+- [ ] Cross-links updated in both directions; `CLAUDE.md` §2 item 7's dev-setup pointer and any
+      other doc referencing dev-setup.md's old section numbers get checked for staleness.
+
+**Notes**: Deliberately deferred, not started now — today's §9 is still dev-audience work (no
+prebuilt binary yet, same Rust/Python toolchain as §1–2 either way), so the setup/usage line is
+blurry. Revisit once Milestone 7 (`VAI-007`) ships prebuilt binaries + bundled models, when a real
+end-user usage doc (no Rust/Python toolchain, no `make`) becomes a genuinely different document
+for a genuinely different reader. Depends on `VAI-007`.
+
+---
+
 *Add new tickets below this line. Use the same format: heading with ID · priority · status · brief category; then bold one-line title; then acceptance criteria as checkboxes; then notes.*
 
 ---

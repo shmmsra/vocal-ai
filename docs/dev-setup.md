@@ -17,7 +17,7 @@
 
 **Windows**: neither `rustup` nor `pyenv` ships with Windows, and no build tool (`make`) is
 preinstalled either. See §3 for the exact install commands and §2 for `pyenv-win` setup
-(it's a separate reimplementation, not a drop-in for `pyenv`). See §10 for known Windows-specific
+(it's a separate reimplementation, not a drop-in for `pyenv`). See §8 for known Windows-specific
 gotchas — a `PATH` that doesn't refresh in an already-open shell, and a stale `pyenv-win`
 version cache.
 
@@ -75,7 +75,7 @@ pip install -r requirements.txt
 
 Re-activate the venv (`source export/.venv/bin/activate` / `export\.venv\Scripts\activate`)
 in any new shell before running `export_*.py`, `parity_check.py`, or `pytest` in `export/`
-directly. `make check` finds this venv automatically (see §6) — no activation needed just
+directly. `make check` finds this venv automatically (see §5) — no activation needed just
 to commit.
 
 ---
@@ -93,19 +93,7 @@ to commit.
 
 ---
 
-## 4. Agent skills and MCP servers
-
-This project integrates with the following agent skills / MCP servers. Install / authorise them in your local Claude Code / Codex / Gemini setup before working in this repo.
-
-| Skill / MCP | Purpose | How to install |
-|-------------|---------|-----------------|
-| `ai-sdlc-bootstrap` | The skill that scaffolded this workflow (already applied) | n/a |
-
-*Add rows when you integrate new skills or MCP servers. Include the install command + any auth steps. If a skill is required for an end-to-end test path, note that here.*
-
----
-
-## 5. Install the git hooks (one-time)
+## 4. Install the git hooks (one-time and optional)
 
 ```bash
 make setup-hooks
@@ -121,7 +109,7 @@ You only need to run `make setup-hooks` once per clone. Re-run it if you delete 
 
 ---
 
-## 6. Run the baseline check
+## 5. Run the baseline check
 
 ```bash
 make check
@@ -136,12 +124,12 @@ tests to pass rather than error on missing imports. If `make check` fails for an
 on a clean clone, fix `docs/dev-setup.md` first — the install instructions above are wrong.
 
 > To actually run the app (generate speech to a WAV) rather than just pass the test gate, see
-> **§11 — Generate model artifacts + run the app** below. `make check` does *not* produce the
+> **§9 — Generate model artifacts + run the app** below. `make check` does *not* produce the
 > `models/` files the CLI needs.
 
 ---
 
-## 7. Editor / IDE setup
+## 6. Editor / IDE setup
 
 The repo carries workspace settings for VS Code. Open the repo in VS Code and accept the recommended extensions when prompted.
 
@@ -151,17 +139,7 @@ The repo carries workspace settings for VS Code. Open the repo in VS Code and ac
 
 ---
 
-## 8. Environment variables / secrets
-
-This project has no secrets today. If one is introduced later:
-
-1. Copy `.env.example` to `.env`.
-2. Fill in the required values (ask the project owner for any internal ones).
-3. **Never commit `.env`.** It's in `.gitignore`.
-
----
-
-## 9. Verify the agent workflow
+## 7. Verify the agent workflow
 
 To prove your environment can drive the agent-SDLC contract end-to-end:
 
@@ -175,7 +153,7 @@ If any of those steps fails, the local hooks are not installed correctly — re-
 
 ---
 
-## 10. Troubleshooting
+## 8. Troubleshooting
 
 | Symptom | Likely cause | Fix |
 |---------|--------------|-----|
@@ -186,13 +164,13 @@ If any of those steps fails, the local hooks are not installed correctly — re-
 | `pyenv install <version>` on Windows fails with `definition not found` for a version that exists on python.org | pyenv-win's local version cache is stale and `pyenv update` is broken on modern Windows | See the workaround in §2 (Python toolchain on Windows) |
 | `cargo test` / `make check` fails on Windows with `LNK2038: RuntimeLibrary mismatch (MD_DynamicRelease vs MT_StaticRelease)` | A transitive C++ dep compiled against a different CRT than ONNX Runtime's prebuilt | Already fixed in-repo (ADR-0010): `tokenizers` is pinned with `default-features = false` to drop the static-CRT `esaxx_fast` C++. If it recurs after a dep bump, re-check the new dep's default features for a `/MT` C++ build |
 | `make check` on Windows errors with `-x was unexpected at this time` or `'.venv' is not recognized` | An old Makefile recipe used POSIX-shell syntax / the POSIX venv path; `make` runs recipes through `cmd.exe` on Windows | Already fixed in-repo (ADR-0010): the `test-py*` recipes now OS-detect `.venv\Scripts\python.exe` and avoid shell conditionals. Pull latest `Makefile` |
-| `error: failed to load models from models: ...` when running `vocalai` | The `models/` directory hasn't been populated (its contents are git-ignored build artifacts, never committed) | Run the export scripts in §11 to generate them |
+| `error: failed to load models from models: ...` when running `vocalai` | The `models/` directory hasn't been populated (its contents are git-ignored build artifacts, never committed) | Run the export scripts in §9 to generate them |
 
 *Add new rows as the team discovers recurring setup gotchas.*
 
 ---
 
-## 11. Generate model artifacts + run the app (end-to-end)
+## 9. Generate model artifacts + run the app (end-to-end)
 
 `make check` verifies the code but does **not** produce the model files the CLI loads. The
 `models/` directory holds ONNX graphs + `.npy` tensors that are dev-time build artifacts —
@@ -204,7 +182,7 @@ All scripts write to `<repo>/models/` regardless of the directory you run them f
 anchored to the repo root, not the current working directory). The commands below call the venv
 interpreter directly, so you don't need to activate the venv first.
 
-### 11.1 Generate the model files (one-time, for the default-voice path)
+### 9.1 Generate the model files (one-time, for the default-voice path)
 
 These eight steps produce every file `vocalai` loads for default-voice synthesis:
 
@@ -271,13 +249,13 @@ $py = "export\.venv\Scripts\python.exe"
 & $py export\export_s3tokenizer.py
 ```
 
-### 11.2 Build the CLI
+### 9.2 Build the CLI
 
 ```bash
 cargo build --release -p vocalai-cli
 ```
 
-### 11.3 Synthesize speech
+### 9.3 Synthesize speech
 
 **macOS / Linux**:
 ```bash
@@ -291,7 +269,7 @@ cargo build --release -p vocalai-cli
 
 Each run prints `Wrote out.wav` and exits 0. The output is a mono 24 kHz 16-bit PCM WAV
 (~0.9 s for "hello world") of audible, non-silent speech. Quick non-audio sanity check
-(reuse the venv interpreter from §11.1):
+(reuse the venv interpreter from §9.1):
 
 ```bash
 export/.venv/bin/python -c "import wave; w=wave.open('out.wav'); print(w.getnchannels(), w.getframerate(), w.getnframes())"
@@ -301,7 +279,7 @@ export/.venv/bin/python -c "import wave; w=wave.open('out.wav'); print(w.getncha
 `--cfg-weight` (0.5), `--temperature` (0.8), `--repetition-penalty` (1.2), `--min-p` (0.05),
 `--top-p` (1.0), `--max-new-tokens` (1000). `--voice <ref.wav>` does zero-shot voice cloning from a
 WAV reference clip (requires `ve.onnx`/`s3tokenizer.onnx` from the note above, plus `campplus.onnx`
-from §11.1's main list):
+from §9.1's main list):
 
 ```bash
 ./target/release/vocalai --text "hello world" --voice ref.wav --out cloned.wav --models-dir models

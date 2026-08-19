@@ -485,8 +485,8 @@ python parity_check.py --component hifigan
 **Prerequisites**:
 - The full `models/` directory must be populated. **The single, authoritative, cross-platform
   (macOS/Linux + Windows) command list for generating every required artifact — plus the build and
-  run commands — lives in `docs/dev-setup.md` §11.** Follow §11.1 (generate model files) once, then
-  §11.2 (build). Don't re-derive the export order from the per-milestone sections above.
+  run commands — lives in `docs/dev-setup.md` §9.** Follow §9.1 (generate model files) once, then
+  §9.2 (build). Don't re-derive the export order from the per-milestone sections above.
 - For the record, `ModelBundle::load` (`crates/vocalai-core/src/pipeline.rs`) requires exactly:
   `tokenizer.json`, `t3_cond_prefill.onnx`, `t3_decoder.onnx`, `t3_speech_emb.npy`,
   `t3_speech_pos_emb.npy`, `s3gen_estimator.onnx`, `s3gen_flow_encoder_{200,400,600,800,1000,1200}.onnx`,
@@ -495,7 +495,7 @@ python parity_check.py --component hifigan
   on the first `--voice` call (see the part B.2 section below) -- the default-voice-only path never
   pays their load cost.
 
-**Test command(s)** (see `docs/dev-setup.md` §11 for the full per-platform export list this assumes
+**Test command(s)** (see `docs/dev-setup.md` §9 for the full per-platform export list this assumes
 is already done; `--out /tmp/out.wav` shown for POSIX, use `--out out.wav` on Windows):
 ```bash
 cargo build --release -p vocalai-cli
@@ -615,7 +615,8 @@ make check
 **Setup**:
 - Rust toolchain (`cargo`), GNU `make`, and the `export/.venv` all installed per `docs/dev-setup.md`.
 - On Windows, run from a shell whose PATH already includes `cargo` and `make` (open a *new* shell
-  after installing them — see §10). No `sh`/Git Bash is required; the recipes run under `cmd.exe`.
+  after installing them — see `docs/dev-setup.md` §8). No `sh`/Git Bash is required; the recipes
+  run under `cmd.exe`.
 
 **What to observe**:
 - `cargo test --workspace` **links and runs** — it does not abort at the MSVC linker.
@@ -649,7 +650,7 @@ make export ARGS=--with-voice-cloning  # + ve.onnx/s3tokenizer.onnx for --voice
 
 **What to observe**:
 - `make help` lists `make export`.
-- `make export` prints one `→ Running export/<script>.py...` line per script, in the §11.1 order
+- `make export` prints one `→ Running export/<script>.py...` line per script, in the §9.1 order
   (`fetch_tokenizer.py`, `export_t3.py`, `export_s3gen.py`, `export_s3gen_flow_encoder.py`,
   `export_hifigan.py`, `export_perthnet.py`, `export_campplus.py`, `export_default_voice.py`),
   then `✓ All model artifacts generated in <repo>/models/`.
@@ -661,7 +662,7 @@ make export ARGS=--with-voice-cloning  # + ve.onnx/s3tokenizer.onnx for --voice
 
 **Pass criteria**:
 - Both invocations exit 0 and populate `models/` with the full artifact set (cross-check against
-  the table in `docs/dev-setup.md` §11.1).
+  the table in `docs/dev-setup.md` §9.1).
 - The Windows path (`scripts\export-all.ps1`, dispatched automatically by `make export` when
   `$(OS)` is `Windows_NT`) behaves identically — same flag, same script order, same error text.
   This needs a real Windows run to confirm; it has only been read-reviewed against the POSIX
