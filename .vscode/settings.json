@@ -41,5 +41,9 @@
     "editor.tabSize": 4
   },
 
+  "cSpell.words": [
+    "vocalai"
+  ],
+
   "rust-analyzer.check.command": "clippy"
 }
