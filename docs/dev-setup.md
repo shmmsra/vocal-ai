@@ -255,6 +255,12 @@ $py = "export\.venv\Scripts\python.exe"
 cargo build --release -p vocalai-cli
 ```
 
+Or `make build` from the repo root, which auto-detects and compiles in the right hardware
+execution-provider feature for your OS (`coreml` on macOS, `cuda` on Windows/Linux) — see VAI-011 /
+ADR-0012. This never requires a local GPU or CUDA toolchain to *compile*; only *using* the resulting
+hardware EP at runtime needs real hardware. `vocalai` itself uses CPU by default regardless of which
+feature was compiled in — see §9.3 for `--use-gpu`.
+
 ### 9.3 Synthesize speech
 
 **macOS / Linux**:
@@ -267,9 +273,12 @@ cargo build --release -p vocalai-cli
 .\target\release\vocalai.exe --text "hello world" --out out.wav --models-dir models
 ```
 
-Each run prints `Wrote out.wav` and exits 0. The output is a mono 24 kHz 16-bit PCM WAV
-(~0.9 s for "hello world") of audible, non-silent speech. Quick non-audio sanity check
-(reuse the venv interpreter from §9.1):
+Each run first prints `Using GPU execution provider (...)` or `Using CPU execution provider`
+(VAI-011 — CPU by default; pass `--use-gpu` to require a hardware EP with a tuned CoreML/CUDA config
+and error instead of falling back, or `--use-cpu` for the same default behavior explicitly), then
+`Wrote out.wav`, and exits 0. The output is a
+mono 24 kHz 16-bit PCM WAV (~0.9 s for "hello world") of audible, non-silent speech. Quick non-audio
+sanity check (reuse the venv interpreter from §9.1):
 
 ```bash
 export/.venv/bin/python -c "import wave; w=wave.open('out.wav'); print(w.getnchannels(), w.getframerate(), w.getnframes())"
@@ -277,7 +286,9 @@ export/.venv/bin/python -c "import wave; w=wave.open('out.wav'); print(w.getncha
 
 **Tuning flags** (all optional, defaults in parentheses): `--exaggeration` (0.5),
 `--cfg-weight` (0.5), `--temperature` (0.8), `--repetition-penalty` (1.2), `--min-p` (0.05),
-`--top-p` (1.0), `--max-new-tokens` (1000). `--voice <ref.wav>` does zero-shot voice cloning from a
+`--top-p` (1.0), `--max-new-tokens` (1000). `--use-gpu`/`--use-cpu` (mutually exclusive, default:
+CPU) control execution-provider selection — see VAI-011 / ADR-0012.
+`--voice <ref.wav>` does zero-shot voice cloning from a
 WAV reference clip (requires `ve.onnx`/`s3tokenizer.onnx` from the note above, plus `campplus.onnx`
 from §9.1's main list):
 

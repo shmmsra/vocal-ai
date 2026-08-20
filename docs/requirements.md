@@ -37,7 +37,15 @@
   arbitrary-length text (VAI-009 fixed HiFiGAN's ONNX export, which was the last blocker); part
   B.2 (`--voice` cloning: `voice_encoder.rs`, `s3tokenizer.rs`, `campplus.rs`, `mel.rs`) verified
   end-to-end producing genuine non-silent audio from a live reference wav
+- [x] VAI-011: `--use-gpu`/`--use-cpu` execution-provider selection, CPU by default (a hardware-EP
+  registration/inference failure errors out under `--use-gpu` rather than silently falling back);
+  `Makefile` OS-based feature auto-detection; benchmarked and fixed a 30-40% CoreML slowdown vs CPU
+  for T3's decode loop by tuning `ort`'s CoreML EP config (ADR-0012)
 - [ ] Milestone 7: Per-platform packaging (macOS/CoreML, Windows/Linux CUDA, CPU fallback)
+- [ ] VAI-012: `--show-progress` console progress indicator (split out of VAI-011)
+- [ ] VAI-013: GitHub Actions cross-platform release-build matrix (Windows/macOS/Linux)
+- [ ] VAI-014: bucket `s3gen_estimator.onnx`'s time dimension so CoreML covers the full pipeline
+  (real fix for the CPU pin VAI-011 added as a workaround)
 
 ---
 

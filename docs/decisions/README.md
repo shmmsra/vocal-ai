@@ -70,6 +70,7 @@ What becomes easier? What becomes harder? What new commitments does this create?
 | [0009](0009-s3gen-flow-encoder-and-campplus-export.md) | Export S3Gen's flow encoder + CAMPPlus as fixed-length/bucketed graphs; the Milestone 3 export was incomplete | Accepted |
 | [0010](0010-windows-build-and-make-portability.md) | Windows build + `make check` portability (disable `esaxx_fast`, OS-detect the pytest interpreter) | Accepted |
 | [0011](0011-voice-cloning-dsp-front-ends-hand-rolled-not-parity-checked.md) | `--voice` zero-shot cloning's DSP front ends are hand-rolled Rust with no automated parity gate | Accepted |
+| [0012](0012-execution-provider-selection-use-gpu-use-cpu-auto.md) | Execution-provider selection (`--use-gpu`/`--use-cpu`, CPU by default), tuning CoreML for T3's decode loop, and pinning `s3gen_estimator.onnx` to CPU | Accepted |
 
 *Add new rows as ADRs accumulate.*
 

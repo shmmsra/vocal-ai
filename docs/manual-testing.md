@@ -112,11 +112,11 @@ make check
 
 ---
 
-## Execution-provider selection (Milestone 1)
+## Execution-provider selection (Milestone 1 / VAI-011)
 
 **Test command(s)**:
 ```bash
-cargo test -p vocalai-core session:: 
+cargo test -p vocalai-core session::
 cargo test -p vocalai-core --features coreml session::
 ```
 
@@ -125,13 +125,61 @@ cargo test -p vocalai-core --features coreml session::
 **What to observe**: Test names and pass/fail output from `crates/vocalai-core/src/session.rs`'s `session::tests` module.
 
 **Pass criteria**:
-- Default build (no features): `execution_providers()` returns exactly one entry, and it downcasts to `CPU`.
-- `--features coreml` build: `execution_providers()` returns `[CoreML, CPU]` in that order — CoreML first, CPU last.
-- All tests pass, no clippy warnings under either feature combination (`cargo clippy --workspace --all-targets -- -D warnings`, then again with `--features vocalai-core/coreml`).
+- Default build (no features): `hardware_execution_providers()` returns an empty list; `resolve_and_build_session(_, ExecutionProviderPreference::Gpu)` returns `Err(SessionError::GpuUnavailable(None))` immediately, without touching the filesystem/ORT.
+- `--features coreml` build: `hardware_execution_providers()` includes an entry named `"CoreML"` that downcasts to `CoreML`.
+- `ResolvedProvider::Cpu`/`Gpu("CoreML")` `Display` output matches `"CPU execution provider"`/`"GPU execution provider (CoreML)"`.
+- All tests pass, no clippy warnings under either feature combination (`cargo clippy --workspace --all-targets -- -D warnings`, then again with `--features vocalai-cli/coreml`).
 
 **Fail indicators**:
-- CPU appears anywhere but last in the list.
+- `Gpu` mode ever silently falls back to CPU (must error instead — see `SessionError::GpuUnavailable`).
 - A hardware EP is missing when its feature is enabled, or present when it isn't.
+
+---
+
+## CLI: `--use-gpu`/`--use-cpu` execution-provider selection, CPU by default (VAI-011)
+
+**Test command(s)** (from a machine with `models/` already populated — see "CLI: default-voice
+end-to-end synthesis" below):
+```bash
+make build   # auto-detects --features vocalai-cli/coreml (macOS) or vocalai-cli/cuda (else)
+
+./target/release/vocalai --text "Testing default (CPU)." --out /tmp/def.wav --models-dir models
+./target/release/vocalai --text "Testing forced GPU." --out /tmp/gpu.wav --models-dir models --use-gpu
+./target/release/vocalai --text "Testing forced CPU." --out /tmp/cpu.wav --models-dir models --use-cpu
+./target/release/vocalai --text "test" --use-gpu --use-cpu   # expect a clap conflict, no models needed
+```
+
+**What to observe**: the `Using <...> execution provider` line printed to stderr right after models
+load, and whether each command exits 0 with `Wrote <path>`.
+
+**Pass criteria**:
+- No flag: prints `Using CPU execution provider`, succeeds. Same as `--use-cpu` (see
+  `docs/decisions/0012-*.md` for why CPU is the default rather than trying GPU first).
+- `--use-gpu` on a capable machine: prints `Using GPU execution provider (CoreML)` (or `CUDA`),
+  succeeds. **Do not expect it to be faster than CPU** — the tuned CoreML config
+  (`CPUAndGPU`/`FastPrediction`/`RequireStaticInputShapes`) only fixes the *severe* naive-config
+  regression (was 30-40% slower); real-world testing found no speed improvement over CPU, and one
+  full-scale benchmark even measured it ~14% slower (see `docs/decisions/0012-*.md`'s 2026-08-20
+  correction). `--use-gpu` on a build with no `coreml`/`cuda` feature compiled in, or on hardware
+  that can't register the EP: exits 1 with an actionable `SessionError::GpuUnavailable` message
+  (build without the hardware feature to reproduce this deterministically).
+- `--use-cpu`: always prints `Using CPU execution provider` and succeeds, regardless of what
+  hardware is present.
+- `--use-gpu --use-cpu` together: clap rejects it before any model loads (`error: the argument
+  '--use-gpu' cannot be used with '--use-cpu'`), exit code 2.
+- On CoreML specifically: no `error: ONNX Runtime session error: ... CoreML ...` mid-run — this
+  would indicate the `s3gen_estimator.onnx` CPU pin (VAI-011/ADR-0012) regressed; check
+  `pipeline.rs::ModelBundle::load`'s `estimator_provider` special-case is still present until
+  VAI-014 removes it.
+
+**Fail indicators**:
+- `--use-gpu` silently produces `Using CPU execution provider` — the whole point of the flag is to
+  never do this.
+- `--use-gpu` dramatically slower than `--use-cpu` (i.e. back to the original ~30-40% naive-config
+  regression, not just "not obviously faster") — would indicate the CoreML config tuning regressed
+  (check `session.rs::hardware_execution_providers`'s `.with_compute_units`/
+  `.with_specialization_strategy`/`.with_static_input_shapes` calls are still present). A small,
+  inconclusive difference either way is expected — see the pass criteria above.
 
 ---
 
@@ -514,7 +562,9 @@ generalizes across frame counts rather than coincidentally matching one:
 ```
 
 **What to observe**:
-- Both commands print `Wrote <path>` and exit 0 — no `speech_feat` shape-mismatch error.
+- Both commands print a `Using GPU execution provider (...)`/`Using CPU execution provider` line
+  (VAI-011) to stderr right after models load, then `Wrote <path>` and exit 0 — no `speech_feat`
+  shape-mismatch error.
 - `/tmp/out.wav` is a mono 24000 Hz 16-bit PCM WAV, ~0.9s long; `/tmp/out_long.wav` is ~7.4s long.
 - Inspect programmatically if you can't listen: `python3 -c "import wave; w=wave.open('/tmp/out.wav'); print(w.getnchannels(), w.getframerate(), w.getnframes())"`.
 - The waveform should not be silence/NaN: peak amplitude and RMS should both be clearly nonzero

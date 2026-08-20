@@ -52,6 +52,9 @@ pub struct SynthesisParams {
 #[derive(Debug)]
 pub enum PipelineError {
     Session(ort::Error),
+    /// `--use-gpu` was passed but no hardware execution provider is usable
+    /// (VAI-011, see `session::SessionError`).
+    GpuUnavailable(session::SessionError),
     Npy(ndarray_npy::ReadNpyError),
     Tokenizer(Box<dyn std::error::Error + Send + Sync>),
     /// Failed to read a `--voice` reference WAV file.
@@ -67,6 +70,7 @@ impl std::fmt::Display for PipelineError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             PipelineError::Session(e) => write!(f, "ONNX Runtime session error: {e}"),
+            PipelineError::GpuUnavailable(e) => write!(f, "{e}"),
             PipelineError::Npy(e) => write!(f, "failed to load a .npy model weight: {e}"),
             PipelineError::Tokenizer(e) => write!(f, "text tokenizer error: {e}"),
             PipelineError::Audio(e) => write!(f, "failed to read --voice reference audio: {e}"),
@@ -85,6 +89,17 @@ impl std::error::Error for PipelineError {}
 impl From<ort::Error> for PipelineError {
     fn from(e: ort::Error) -> Self {
         PipelineError::Session(e)
+    }
+}
+
+impl From<session::SessionError> for PipelineError {
+    fn from(e: session::SessionError) -> Self {
+        match e {
+            session::SessionError::Ort(inner) => PipelineError::Session(inner),
+            gpu_err @ session::SessionError::GpuUnavailable(_) => {
+                PipelineError::GpuUnavailable(gpu_err)
+            }
+        }
     }
 }
 
@@ -226,6 +241,10 @@ impl VoiceConditioning {
 /// ~1.2GB of sessions never used in a single synthesis call.
 pub struct ModelBundle {
     models_dir: PathBuf,
+    /// The execution-provider decision made once, against the first session
+    /// built in [`ModelBundle::load`] (VAI-011), and reused for every other
+    /// session this bundle builds (including the lazily loaded ones below).
+    resolved_provider: session::ResolvedProvider,
     pub tokenizer: tokenizer::TextTokenizer,
     pub t3_cond_prefill_session: Session,
     pub t3_decoder_session: Session,
@@ -246,18 +265,48 @@ pub struct ModelBundle {
 }
 
 impl ModelBundle {
-    pub fn load(models_dir: &Path) -> Result<Self, PipelineError> {
-        let session_at = |name: &str| session::build_session(&models_dir.join(name));
+    pub fn load(
+        models_dir: &Path,
+        ep_pref: session::ExecutionProviderPreference,
+    ) -> Result<Self, PipelineError> {
+        let (t3_cond_prefill_session, resolved_provider) =
+            session::resolve_and_build_session(&models_dir.join("t3_cond_prefill.onnx"), ep_pref)?;
+        let session_at =
+            |name: &str| session::build_session(&models_dir.join(name), resolved_provider);
+
+        // VAI-011 follow-up: `s3gen_estimator.onnx`'s Euler ODE loop runs on a
+        // genuinely dynamic (non-bucketed) sequence length (`2 * token_len`)
+        // through a UNet-style attention architecture -- confirmed (manually) to
+        // reliably crash CoreML at inference time, unlike every other session in
+        // this bundle (including T3's full decode loop), which run on CoreML fine.
+        // Pinned to CPU whenever CoreML was resolved; CUDA is untested and left
+        // alone. See `docs/issues.md` VAI-014 for the real fix (bucketing this
+        // model's time dimension like the flow-encoder already is, ADR-0009).
+        let estimator_provider = match resolved_provider {
+            session::ResolvedProvider::Gpu("CoreML") => {
+                tracing::warn!(
+                    "forcing the S3Gen flow estimator to CPU (known CoreML incompatibility, \
+                     VAI-014); every other session still uses {resolved_provider}"
+                );
+                session::ResolvedProvider::Cpu
+            }
+            other => other,
+        };
+
         Ok(Self {
             models_dir: models_dir.to_path_buf(),
+            resolved_provider,
             tokenizer: tokenizer::TextTokenizer::from_file(&models_dir.join("tokenizer.json"))
                 .map_err(PipelineError::Tokenizer)?,
-            t3_cond_prefill_session: session_at("t3_cond_prefill.onnx")?,
+            t3_cond_prefill_session,
             t3_decoder_session: session_at("t3_decoder.onnx")?,
             t3_speech_emb: t3::load_embedding_table(&models_dir.join("t3_speech_emb.npy"))?,
             t3_speech_pos_emb: t3::load_embedding_table(&models_dir.join("t3_speech_pos_emb.npy"))?,
             flow_encoder_sessions: HashMap::new(),
-            s3gen_estimator_session: session_at("s3gen_estimator.onnx")?,
+            s3gen_estimator_session: session::build_session(
+                &models_dir.join("s3gen_estimator.onnx"),
+                estimator_provider,
+            )?,
             hifigan_session: session_at("hifigan.onnx")?,
             perthnet_session: session_at("perthnet_encoder.onnx")?,
             s3gen_spk_embed_affine_weight: ndarray_npy::read_npy(
@@ -274,19 +323,23 @@ impl ModelBundle {
     }
 
     /// Lazily loads (on first `--voice` use) and returns `models/ve.onnx`'s session.
-    fn ensure_ve_session(&mut self) -> ort::Result<&mut Session> {
+    fn ensure_ve_session(&mut self) -> Result<&mut Session, session::SessionError> {
         if self.ve_session.is_none() {
-            self.ve_session = Some(session::build_session(&self.models_dir.join("ve.onnx"))?);
+            self.ve_session = Some(session::build_session(
+                &self.models_dir.join("ve.onnx"),
+                self.resolved_provider,
+            )?);
         }
         Ok(self.ve_session.as_mut().expect("just ensured"))
     }
 
     /// Lazily loads (on first `--voice` use) and returns `models/s3tokenizer.onnx`'s
     /// session -- shared by both T3's cond-prompt tokens and S3Gen's prompt token.
-    fn ensure_s3tokenizer_session(&mut self) -> ort::Result<&mut Session> {
+    fn ensure_s3tokenizer_session(&mut self) -> Result<&mut Session, session::SessionError> {
         if self.s3tokenizer_session.is_none() {
             self.s3tokenizer_session = Some(session::build_session(
                 &self.models_dir.join("s3tokenizer.onnx"),
+                self.resolved_provider,
             )?);
         }
         Ok(self.s3tokenizer_session.as_mut().expect("just ensured"))
@@ -294,13 +347,20 @@ impl ModelBundle {
 
     /// Lazily loads (on first `--voice` use) and returns `models/campplus.onnx`'s
     /// session.
-    fn ensure_campplus_session(&mut self) -> ort::Result<&mut Session> {
+    fn ensure_campplus_session(&mut self) -> Result<&mut Session, session::SessionError> {
         if self.campplus_session.is_none() {
             self.campplus_session = Some(session::build_session(
                 &self.models_dir.join("campplus.onnx"),
+                self.resolved_provider,
             )?);
         }
         Ok(self.campplus_session.as_mut().expect("just ensured"))
+    }
+
+    /// The execution provider [`ModelBundle::load`] resolved (once) for this
+    /// bundle's sessions -- for the CLI to report which one is in use.
+    pub fn execution_provider(&self) -> session::ResolvedProvider {
+        self.resolved_provider
     }
 
     /// Ensures the flow-encoder session for `bucket` is loaded (from
@@ -313,10 +373,11 @@ impl ModelBundle {
         sessions: &mut HashMap<usize, Session>,
         models_dir: &Path,
         bucket: usize,
-    ) -> ort::Result<()> {
+        resolved_provider: session::ResolvedProvider,
+    ) -> Result<(), session::SessionError> {
         if let std::collections::hash_map::Entry::Vacant(entry) = sessions.entry(bucket) {
             let path = models_dir.join(format!("s3gen_flow_encoder_{bucket}.onnx"));
-            entry.insert(session::build_session(&path)?);
+            entry.insert(session::build_session(&path, resolved_provider)?);
         }
         Ok(())
     }
@@ -430,6 +491,7 @@ pub fn synthesize(
         &mut bundle.flow_encoder_sessions,
         &bundle.models_dir,
         bucket,
+        bundle.resolved_provider,
     )?;
     let flow_encoder_session = bundle
         .flow_encoder_sessions

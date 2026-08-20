@@ -12,7 +12,7 @@ help:
 	@echo "  make test-py-parity-ci  Same, minus heavy_build tests too large to export on a CI runner"
 	@echo "  make typecheck     Run cargo check only"
 	@echo "  make lint          Run clippy only"
-	@echo "  make build         Build the project"
+	@echo "  make build         Build the project (auto-detects --features coreml/cuda by OS)"
 	@echo "  make export        Generate models/*.onnx + *.npy (ARGS=--with-voice-cloning for --voice support)"
 	@echo "  make clean         Remove build artifacts"
 
@@ -32,6 +32,22 @@ else
 endif
 
 PYTEST := $(if $(wildcard $(VENV_PY_GLOB)),$(VENV_PY) -m pytest,pytest)
+
+# ── Hardware execution-provider feature auto-detection (VAI-011) ─────────────
+# `make build` compiles in the hardware EP that `--use-gpu`/auto-mode
+# (`crates/vocalai-core/src/session.rs`) can actually try on this OS: CoreML on
+# macOS, CUDA everywhere else (Windows/Linux). This only affects what gets
+# *compiled in* -- `ort-sys` downloads a prebuilt ONNX Runtime binary for the
+# feature, so this never requires a local CUDA toolkit/GPU to build, only to
+# actually use the resulting hardware EP at runtime (session.rs's `Auto` mode
+# falls back to CPU, logged, if no usable GPU is present at runtime).
+ifeq ($(OS),Windows_NT)
+  HW_FEATURE := cuda
+else ifeq ($(shell uname -s),Darwin)
+  HW_FEATURE := coreml
+else
+  HW_FEATURE := cuda
+endif
 
 # ── Pre-commit gate ──────────────────────────────────────────────────────────
 
@@ -81,7 +97,7 @@ test: test-rs test-py
 lint: clippy
 
 build:
-	cargo build --workspace --release
+	cargo build --workspace --release --features vocalai-cli/$(HW_FEATURE)
 
 # ── Model artifact generation ─────────────────────────────────────────────────
 # Runs export/'s scripts in the order docs/dev-setup.md §11.1 documents, writing

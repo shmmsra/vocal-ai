@@ -6,6 +6,98 @@
 
 ---
 
+## 2026-08-20 — Correction: VAI-011's "CoreML tuning reaches CPU parity" claim was overstated
+
+**What changed**: no code changes. Corrected `docs/decisions/0012-*.md`, `docs/CHANGELOG.md`
+(2026-08-19 entry, below), `docs/agents/STATUS.md`, and `docs/manual-testing.md`, which had all
+claimed the tuned CoreML config (`CPUAndGPU`+`FastPrediction`+`RequireStaticInputShapes`) restored
+GPU to "CPU parity or better." That claim doesn't hold up: the small-scale benchmark it was based on
+was within RNG-driven run-to-run noise (each `vocalai` invocation gets a fresh RNG, so the number of
+tokens generated before EOS varies run to run even at a fixed `--max-new-tokens` cap), and a
+full-scale (default 1000-max-tokens) run that was already on hand at the time showed the tuned
+config **~14% slower than CPU**, not faster — a contradiction that should have been surfaced instead
+of dismissed as noise. The repo owner's own real-world re-test after the fix landed also found no
+improvement, which is what prompted this correction.
+
+**Why**: accuracy — an agent asserting a performance win that the agent's own data already
+contradicted, without flagging the contradiction, is worse than not measuring at all.
+
+**What's actually true, kept from VAI-011**: the tuning is a real, worthwhile fix for the *severe*
+regression (naive CoreML config was 30-40% slower than CPU) — it brings GPU to roughly
+tied-or-somewhat-worse, not clearly worse across the board. `--use-gpu` stays available with the
+tuned config (no reason to remove an opt-in path just because it isn't a proven win), CPU stays the
+default, and the `.error_on_failure()`/`s3gen_estimator` CPU-pin fixes from VAI-011 are unaffected by
+this correction.
+
+**What's next**: if GPU speed is worth pursuing further, it needs a properly controlled benchmark
+(deterministic/fixed token count, many repeated trials) before any claim is made — not attempted in
+this session.
+
+---
+
+## 2026-08-19 — VAI-011: `--use-gpu`/`--use-cpu` execution-provider selection (CPU by default)
+
+**What changed**: `vocalai` now takes `--use-gpu`/`--use-cpu` (mutually exclusive); neither flag
+defaults to CPU. `--use-gpu` requires a hardware EP (CoreML/CUDA, gated by Cargo features) and
+errors out (`SessionError::GpuUnavailable`) instead of silently falling back to CPU if none is
+usable. The resolved provider is printed (`Using GPU execution provider (CoreML)` / `Using CPU
+execution provider`) and decided once per `ModelBundle`, not once per session
+(`session::resolve_and_build_session`/`build_session`, `pipeline.rs::ModelBundle`). Registration
+uses `ort`'s `.error_on_failure()` (opposite of the previous `.fail_silently()`) so a failed
+hardware-EP registration is a catchable `ort::Error`, not a silent continuation. `Makefile`'s
+`build:` target auto-detects the right feature per OS (`coreml` on macOS, `cuda` elsewhere) so
+`make build` compiles in hardware-EP support regardless of default — confirmed this never requires
+local GPU hardware/CUDA toolchain to *compile*, only to actually *use* the resulting EP at runtime
+(`ort-sys` downloads a prebuilt ONNX Runtime binary per target+feature).
+
+Manual testing on real Apple Silicon hardware surfaced two things the original plan hadn't
+anticipated:
+
+1. `s3gen_estimator.onnx` (S3Gen's flow-matching Euler ODE estimator) reliably crashes ONNX
+   Runtime's CoreML EP mid-inference. Bisected by manually forcing just that one session to CPU
+   while leaving everything else (including T3's full up-to-1000-step KV-cache decode loop) on
+   CoreML — confirmed that isolates the fix. Root cause: the estimator is the only session in the
+   pipeline whose sequence length is genuinely dynamic (`2 * token_len`) rather than bucketed like
+   the flow-encoder (ADR-0009). `ModelBundle::load` now pins this one session to CPU whenever
+   CoreML is resolved (CUDA untested, left alone; real fix tracked as VAI-014).
+2. Once that crash was fixed, CoreML's **default configuration measured 30-40% slower than CPU**
+   wall-clock, and subjectively made the whole machine feel less responsive during a run — directly
+   contradicting the original assumption that "T3's decode loop is where most of the GPU speedup
+   is." Root cause: T3's decode loop calls `session.run()` roughly once per generated token (up to
+   ~1000 times); CoreML's default config pays a fixed per-call dispatch/specialization cost that
+   dominates across many tiny sequential calls (compounded by the decoder graph only being
+   partially covered by CoreML, so every call also pays a CPU↔CoreML marshaling cost). Benchmarked
+   three `ort` CoreML config knobs individually and combined (`ComputeUnits::CPUAndGPU`,
+   `SpecializationStrategy::FastPrediction`, `RequireStaticInputShapes`, `ModelFormat::MLProgram`);
+   the combination of the first three fixed the severe regression, while `MLProgram` failed outright
+   for this graph (a clean error, thanks to `.error_on_failure()`). **See the 2026-08-20 correction
+   below** — the initial "parity or better" reading of this benchmark did not hold up. `--use-gpu`
+   (with the tuned config) stays opt-in and CPU stays the default regardless. Full benchmark table
+   in `docs/decisions/0012-*.md`.
+
+The CPU-retry-on-mid-inference-failure safety net an earlier iteration of this session added for
+`Auto` mode was removed once `Auto` stopped being CLI-reachable (dead code keyed on a state that
+could no longer occur) — `session::ExecutionProviderPreference::Auto` remains valid, tested library
+API, just not wired to any current CLI flag.
+
+**Why**: the user wanted a hardware EP failure to be loud rather than a silent, potentially
+much-slower CPU fallback, and also asked "why is GPU mode slower, is that expected, and can we fix
+the root cause?" rather than settling for "GPU is just worse here" — leading to the CoreML
+config-tuning investigation above.
+
+**What was rejected**: re-exporting `s3gen_estimator.onnx` with a bucketed time dimension (the
+"real" fix for the crash, tracked as VAI-014) — separate export-pipeline work, not a CLI-flag
+change. `ModelFormat::MLProgram` — fails to build an execution plan for this graph outright. Keeping
+`Auto`/GPU as the CLI default — the tuned config only reaches parity, not a clear win, which isn't
+enough evidence to default away from CPU. A GitHub Actions cross-platform release-build matrix
+(VAI-013) and the `--show-progress` console progress indicator (VAI-012) were both raised during
+this session and deliberately split into their own tickets rather than bundled in.
+
+**What's next**: VAI-014 (bucket the estimator, remove the CPU pin), VAI-012 (progress indicator),
+VAI-013 (GH Actions release matrix).
+
+---
+
 ## 2026-08-18 — `make export` wrapper script
 
 **What changed**: Added `scripts/export-all.sh` / `scripts/export-all.ps1` and a `make export`

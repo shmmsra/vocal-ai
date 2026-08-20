@@ -1,12 +1,20 @@
 //! `vocalai` CLI: standalone Chatterbox TTS, per docs/phase1-onnx-rust-cli-plan.md
 //! §3. Supports both the built-in default voice and `--voice` zero-shot cloning
 //! from a WAV reference clip (Milestone 6, part B, `docs/issues.md` VAI-006).
+//!
+//! `--use-gpu`/`--use-cpu` (`docs/issues.md` VAI-011) select the execution
+//! provider; neither flag defaults to CPU (see `docs/decisions/0012-*.md` --
+//! CoreML's naive default config measured slower than CPU for T3's
+//! many-tiny-sequential-calls decode loop; `--use-gpu` applies a tuned CoreML
+//! config that fixes that severe regression, but is not a demonstrated speed
+//! win over CPU -- see the ADR's 2026-08-20 correction -- so it stays opt-in).
 
 use std::path::PathBuf;
 use std::process::ExitCode;
 
 use clap::Parser;
 use vocalai_core::pipeline::{synthesize, ModelBundle, SynthesisParams};
+use vocalai_core::session::ExecutionProviderPreference;
 
 /// Standalone Chatterbox TTS: `vocalai --text "hello world" --out out.wav`.
 #[derive(Parser, Debug)]
@@ -58,12 +66,36 @@ struct Args {
     /// convention.
     #[arg(long = "models-dir", default_value = "models")]
     models_dir: PathBuf,
+
+    /// Require a hardware execution provider (CoreML/CUDA); error out rather
+    /// than falling back to CPU if none is usable on this device.
+    #[arg(long = "use-gpu", action = clap::ArgAction::SetTrue, conflicts_with = "use_cpu")]
+    use_gpu: bool,
+
+    /// Use the CPU execution provider only; never attempt a hardware EP.
+    #[arg(long = "use-cpu", action = clap::ArgAction::SetTrue, conflicts_with = "use_gpu")]
+    use_cpu: bool,
 }
 
 fn main() -> ExitCode {
     let args = Args::parse();
 
-    let mut bundle = match ModelBundle::load(&args.models_dir) {
+    // Default (also `--use-cpu`, currently identical): CPU. VAI-011 originally
+    // defaulted to `Auto` (try a hardware EP, fall back to CPU); switched to
+    // CPU-by-default after benchmarking found CoreML's naive config measurably
+    // slower than CPU for T3's decode loop -- see `docs/decisions/0012-*.md`.
+    // `--use-gpu` applies a tuned CoreML config that fixes that severe
+    // regression, but is NOT a demonstrated speed win over CPU (an earlier
+    // "CPU parity or better" reading of the benchmark didn't hold up -- see the
+    // ADR's 2026-08-20 correction), so it stays opt-in. `--use-cpu` stays an
+    // explicit flag (rather than folding it away) so it keeps meaning something
+    // if a future change reintroduces a non-CPU default.
+    let ep_pref = match (args.use_gpu, args.use_cpu) {
+        (true, _) => ExecutionProviderPreference::Gpu,
+        (false, _) => ExecutionProviderPreference::Cpu,
+    };
+
+    let mut bundle = match ModelBundle::load(&args.models_dir, ep_pref) {
         Ok(bundle) => bundle,
         Err(e) => {
             eprintln!(
@@ -73,6 +105,7 @@ fn main() -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
+    eprintln!("Using {}", bundle.execution_provider());
 
     let params = SynthesisParams {
         text: args.text,

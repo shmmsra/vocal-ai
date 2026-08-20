@@ -1,6 +1,6 @@
 # vocal-ai — Current Status & Backlog
 
-> Updated: 2026-08-18
+> Updated: 2026-08-20
 > For the full feature history see [`docs/CHANGELOG.md`](../CHANGELOG.md).
 > For per-ticket detail see [`docs/issues.md`](../issues.md).
 > For the full phase breakdown see [`docs/requirements.md`](../requirements.md).
@@ -25,8 +25,9 @@
 
 *Update this table as phases progress. Use ✅ Complete / 🔄 In progress / 📋 Planned / 🚫 Blocked.*
 
-**Current test counts**: 76 real Rust tests (`crates/vocalai-core/src/session.rs`'s EP-ordering
-coverage — 2 under default features, +1 more under `--features coreml` — `s3gen.rs`'s 5
+**Current test counts**: 77 real Rust tests (`crates/vocalai-core/src/session.rs`'s
+execution-provider-selection coverage, VAI-011 — 3 under default features, +1 more under
+`--features coreml` — `s3gen.rs`'s 5
 Euler-loop/CFG-math tests plus 10 Milestone-6 tests (bucket selection, token padding, valid-
 prefix slicing, `cond` assembly, noise-shape sampling, speaker-embedding normalize+affine),
 `t3.rs`'s 14 KV-cache-loop/sampling-math tests (CFG combine, repetition penalty, temperature,
@@ -101,6 +102,47 @@ acceptance-criterion command) now succeeds end-to-end, verified for both short a
 `docs/issues.md` VAI-009 and `docs/CHANGELOG.md`'s 2026-08-18 VAI-009 entry for the full diagnostic
 trail.
 
+**Resolved (VAI-011, closed 2026-08-19)**: added `--use-gpu`/`--use-cpu` CLI flags
+(`session::ExecutionProviderPreference`); **neither flag defaults to CPU** (not auto-select — see
+the performance note below for why), resolved once per `ModelBundle` and logged (`Using GPU
+execution provider (CoreML)` / `Using CPU execution provider`). `--use-gpu` uses `ort`'s
+`.error_on_failure()` instead of `.fail_silently()`, so a hardware EP that can't register errors out
+rather than silently running CPU. `Makefile`'s `build:` target auto-detects the right feature per OS
+(`coreml` on macOS, `cuda` elsewhere) — compiling with a hardware feature never requires local GPU
+hardware or a CUDA toolchain (`ort-sys` downloads a prebuilt ONNX Runtime binary per target+
+feature), only *using* the resulting EP at runtime does.
+
+**Resolved (VAI-011, see VAI-014)**: manual testing on real Apple Silicon hardware found that
+`s3gen_estimator.onnx` (S3Gen's flow-matching Euler ODE estimator, a UNet-style network) reliably
+crashes ONNX Runtime's CoreML EP at inference time — root-caused by bisection to its genuinely
+dynamic (non-bucketed) `2 * token_len` sequence length, the one session in the pipeline never given
+the bucketing treatment ADR-0009 already gave the flow-encoder. Every other session, including T3's
+full up-to-1000-iteration KV-cache decode loop, runs on CoreML successfully. Worked around:
+`ModelBundle::load` pins the estimator to CPU whenever CoreML is resolved (CUDA untested, left
+alone). `VAI-014` tracks the real fix: bucketing the estimator's export like the flow-encoder, so
+CoreML can cover 100% of the pipeline with no CPU carve-out.
+
+**Resolved (VAI-011) — why CPU is the default, not GPU**: once the crash above was fixed, CoreML's
+*default* configuration measured 30-40% slower than CPU wall-clock (T3's decode loop calls
+`session.run()` ~1000 times; CoreML's fixed per-call dispatch/specialization cost dominates across
+many tiny sequential calls, worse since the decoder graph is only partially CoreML-covered so every
+call also pays a CPU↔CoreML marshaling cost) — directly contradicting this session's original
+assumption that T3's loop is where the GPU speedup lives. Benchmarked `ort`'s CoreML config knobs;
+`ComputeUnits::CPUAndGPU` (excludes the Neural Engine) + `SpecializationStrategy::FastPrediction` +
+`RequireStaticInputShapes` together fixed that severe regression (`ModelFormat::MLProgram` failed
+outright for this graph — a clean error via `.error_on_failure()`, not a hang). This tuned config is
+now permanent in `hardware_execution_providers()`.
+
+**Correction (2026-08-20)**: this session initially read the tuned-config benchmark as "CPU parity
+or better" — that doesn't hold up. The small-scale numbers were within RNG-driven run-to-run noise
+(token count before EOS varies run to run), and a full-scale run already on hand at the time actually
+showed the tuned config ~14% *slower* than CPU — a contradiction that should have been flagged
+instead of dismissed. The repo owner's own real-world re-test confirmed no improvement. Honest
+takeaway: the tuning fixes the severe regression down to roughly tied-or-somewhat-worse; it is not a
+demonstrated speed win. CPU stays the default on this evidence; `--use-gpu` stays available (still a
+real improvement over the naive config, and not worth removing) but should not be recommended for
+speed. See `docs/decisions/0012-*.md` and `docs/CHANGELOG.md`'s 2026-08-20 entry for the full story.
+
 **CI**: split into two workflows since 2026-08-17 — `.github/workflows/ci.yml` (fast:
 fmt/clippy/`cargo test`/`pytest -m "not parity"`) and `.github/workflows/parity.yml` (real-
 checkpoint ONNX-vs-PyTorch tests, `pytest -m "parity and not heavy_build"` — 7 of the 8:
@@ -124,7 +166,11 @@ The next logical work, in priority order. Update at the end of every session.
    `docs/phase1-onnx-rust-cli-plan.md` §7 Milestone 7. Note the resourcing question already
    flagged in "Deferred" below (T3's ~9GB export-time memory) before starting the
    build-generation pipeline.
-2. See `docs/issues.md` for the tracked tickets (`VAI-007`).
+2. VAI-014 — bucket `s3gen_estimator.onnx`'s time dimension so CoreML covers the full pipeline
+   with no CPU carve-out (see the VAI-011 residual-risk note above for the diagnosis).
+3. VAI-012 — `--show-progress` console progress indicator (split out of VAI-011).
+4. VAI-013 — GitHub Actions cross-platform release-build matrix (Windows/macOS/Linux).
+5. See `docs/issues.md` for the full tracked-ticket list.
 
 ---
 
@@ -132,6 +178,8 @@ The next logical work, in priority order. Update at the end of every session.
 
 | Date | Ticket | Summary | Commit |
 |------|--------|---------|--------|
+| 2026-08-20 | — | Correction: walked back VAI-011's "CoreML tuning reaches CPU parity" claim after the repo owner's real-world re-test found no improvement — docs-only, no code change | _pending_ |
+| 2026-08-19 | VAI-011 | `--use-gpu`/`--use-cpu` execution-provider selection (CPU by default), `error_on_failure()` instead of silent hardware-EP fallback, `Makefile` OS-based feature auto-detection, CoreML tuned (`CPUAndGPU`+`FastPrediction`+`RequireStaticInputShapes`) to fix a measured 30-40% slowdown vs CPU, S3Gen flow estimator pinned to CPU on CoreML (real fix tracked as VAI-014) | _pending_ |
 | 2026-08-18 | — | Add `make export` (+ `scripts/export-all.{sh,ps1}`) wrapping the 8-10 `export/` scripts `docs/dev-setup.md` §11.1 documents into one command; `--with-voice-cloning` opt-in for the two extra `--voice`-only exports | _pending_ |
 | 2026-08-18 | VAI-006 | `--voice` zero-shot cloning (part B.2, ADR-0011): `mel.rs`, `voice_encoder.rs`, `s3tokenizer.rs`, `campplus.rs`; `pipeline.rs`'s `DefaultVoice` → `VoiceConditioning` with a `from_reference` constructor. Closes VAI-006. | _pending_ |
 | 2026-08-18 | — | Fix `make check` on Windows/MSVC (ADR-0010): drop `tokenizers`' static-CRT `esaxx_fast` to resolve the `LNK2038` CRT mismatch; make the `test-py*` Makefile recipes `cmd.exe`-portable via `$(OS)`/`$(wildcard)` | _pending_ |
