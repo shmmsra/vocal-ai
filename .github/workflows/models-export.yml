@@ -1,0 +1,71 @@
+# vocal-ai — manual model-export + HuggingFace Hub publish pipeline.
+#
+# Exports every ONNX/.npy artifact from export/ (including T3), gates the result on the
+# FULL parity suite (`make test-py-parity`, not `test-py-parity-ci` -- i.e. including the
+# heavy_build/T3 check ADR-0007 excludes from the always-on parity.yml gate), structurally
+# validates every file (no inference, see scripts/smoke_test_artifact.py), then publishes
+# to the public HuggingFace Hub repo. See
+# docs/decisions/0013-hf-hub-model-distribution-and-release-packaging.md for the full
+# rationale, including why running T3's export+parity here is safe despite ADR-0007: this
+# job only runs on manual trigger, on a public-repo ubuntu-latest runner (4-core/16GB RAM),
+# well above the ~9GB peak that excluded T3 from the always-on per-push gate.
+#
+# Deliberately manual-only (workflow_dispatch), not triggered by export/** pushes:
+# publishing model weights to a public repo is a deliberate, externally-visible action, and
+# this is the heaviest job in the whole pipeline -- not something that should fire
+# automatically on every touch to export/ (including e.g. a test-only edit).
+
+name: Publish model artifacts
+
+on:
+  workflow_dispatch:
+    inputs:
+      with_voice_cloning:
+        description: "Also export ve.onnx/s3tokenizer.onnx (needed for --voice cloning)"
+        type: boolean
+        default: true
+
+jobs:
+  export-and-publish:
+    name: Export ONNX/npy artifacts, verify parity, publish to HF Hub
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Free disk space
+        # Same reasoning as parity.yml's step: this job downloads the full Chatterbox
+        # checkpoint (~1-2GB) and produces every .onnx/.npy artifact (several GB total),
+        # on top of the export/ toolchain (torch, transformers, diffusers, gradio).
+        run: |
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /usr/local/lib/android
+          sudo rm -rf /opt/ghc
+          sudo rm -rf /opt/hostedtoolcache/CodeQL
+          df -h /
+
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install Python export/ dependencies
+        run: pip install -r export/requirements.txt
+
+      - name: Export model artifacts
+        run: |
+          if [ "${{ inputs.with_voice_cloning }}" = "true" ]; then
+            make export ARGS=--with-voice-cloning
+          else
+            make export
+          fi
+
+      - name: Full ONNX-vs-PyTorch parity gate (including T3 -- see ADR-0013)
+        run: make test-py-parity
+
+      - name: Structural smoke test (no inference -- file validation only)
+        run: python scripts/smoke_test_artifact.py --models-dir models
+
+      - name: Publish to HuggingFace Hub
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: python scripts/publish_models.py --repo-id shmmsra/vocal-ai-models --models-dir models

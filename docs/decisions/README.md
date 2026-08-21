@@ -71,6 +71,7 @@ What becomes easier? What becomes harder? What new commitments does this create?
 | [0010](0010-windows-build-and-make-portability.md) | Windows build + `make check` portability (disable `esaxx_fast`, OS-detect the pytest interpreter) | Accepted |
 | [0011](0011-voice-cloning-dsp-front-ends-hand-rolled-not-parity-checked.md) | `--voice` zero-shot cloning's DSP front ends are hand-rolled Rust with no automated parity gate | Accepted |
 | [0012](0012-execution-provider-selection-use-gpu-use-cpu-auto.md) | Execution-provider selection (`--use-gpu`/`--use-cpu`, CPU by default), tuning CoreML for T3's decode loop, and pinning `s3gen_estimator.onnx` to CPU | Accepted |
+| [0013](0013-hf-hub-model-distribution-and-release-packaging.md) | HuggingFace Hub model distribution + release packaging (VAI-007): bundle-at-build, CI-driven export/publish, structural-only smoke tests, CUDA bundling deferred (VAI-015) | Accepted |
 
 *Add new rows as ADRs accumulate.*
 

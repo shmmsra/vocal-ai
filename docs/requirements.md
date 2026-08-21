@@ -41,11 +41,18 @@
   registration/inference failure errors out under `--use-gpu` rather than silently falling back);
   `Makefile` OS-based feature auto-detection; benchmarked and fixed a 30-40% CoreML slowdown vs CPU
   for T3's decode loop by tuning `ort`'s CoreML EP config (ADR-0012)
-- [ ] Milestone 7: Per-platform packaging (macOS/CoreML, Windows/Linux CUDA, CPU fallback)
+- [ ] Milestone 7 (VAI-007): Per-platform packaging — CI-driven export/publish to HF Hub
+  (`models-export.yml`) + build matrix (`release.yml`) landed (ADR-0013); still open: a real
+  publish/release run against the now-public repo, and manual per-platform validation
+  (macOS/CoreML, Windows/Linux CPU landed this pass — CUDA split out to VAI-015)
 - [ ] VAI-012: `--show-progress` console progress indicator (split out of VAI-011)
-- [ ] VAI-013: GitHub Actions cross-platform release-build matrix (Windows/macOS/Linux)
+- [ ] VAI-013: GitHub Actions cross-platform release-build matrix (Windows/macOS/Linux) — likely
+  superseded by VAI-007's `release.yml`, pending confirmation
 - [ ] VAI-014: bucket `s3gen_estimator.onnx`'s time dimension so CoreML covers the full pipeline
   (real fix for the CPU pin VAI-011 added as a workaround)
+- [ ] VAI-015: Windows/Linux CUDA/cuDNN-bundled GPU release artifacts (split out of VAI-007)
+- [ ] VAI-016: version-bump-driven triggers for the model-publish + release pipelines, replacing
+  manual dispatch (split out of VAI-007)
 
 ---
 

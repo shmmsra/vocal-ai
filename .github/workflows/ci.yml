@@ -37,6 +37,9 @@ jobs:
       - name: Install Python export/ dependencies
         run: pip install -r export/requirements.txt
 
+      - name: Install Python scripts/ dependencies
+        run: pip install -r scripts/requirements.txt
+
       # ── The actual gate ──────────────────────────────────────────────────────
       - name: fmt + clippy + Rust tests
         run: |
@@ -46,3 +49,6 @@ jobs:
 
       - name: Python tests (no checkpoint download)
         run: make test-py-fast
+
+      - name: scripts/ tests (no checkpoint download, no network, no inference)
+        run: make test-scripts

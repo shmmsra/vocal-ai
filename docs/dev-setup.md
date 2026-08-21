@@ -298,3 +298,57 @@ from §9.1's main list):
 
 See `docs/manual-testing.md` → "CLI: default-voice end-to-end synthesis" and "CLI: `--voice`
 zero-shot cloning end-to-end synthesis" for the full pass/fail criteria and known failure modes.
+
+## 10. Publish model artifacts + cut a release (Milestone 7 / VAI-007)
+
+See `docs/decisions/0013-hf-hub-model-distribution-and-release-packaging.md` for the full
+design. Two separate GitHub Actions workflows, both manual-trigger-only:
+
+### 10.1 One-time setup: `HF_TOKEN` repo secret
+
+`.github/workflows/models-export.yml` publishes to the public HuggingFace Hub repo
+`shmmsra/vocal-ai-models`, which needs a HuggingFace **write** token. This is a one-time,
+human-only step — never done by an agent, and the token itself should never be pasted into
+a chat session or committed anywhere:
+
+```bash
+# In your own terminal, not via an agent:
+gh secret set HF_TOKEN   # paste the token from https://huggingface.co/settings/tokens when prompted
+```
+
+### 10.2 Publish model artifacts
+
+Trigger `models-export.yml` manually (from the Actions tab, or via `gh`):
+
+```bash
+gh workflow run models-export.yml                                   # default: --with-voice-cloning
+gh workflow run models-export.yml -f with_voice_cloning=false        # default-voice path only
+```
+
+It runs `make export`, gates the result on the **full** `make test-py-parity` (including
+T3 — safe here because this runs on a public-repo `ubuntu-latest` runner with 16GB RAM, well
+above T3's ~9GB export peak; see ADR-0013), structurally validates every file (no
+inference — `scripts/smoke_test_artifact.py`), then publishes to HF Hub.
+
+Local equivalent (e.g. to debug a publish failure), after `make export`:
+
+```bash
+export HF_TOKEN=hf_...     # never on the command line, never committed
+make smoke-test
+make publish-models
+```
+
+### 10.3 Cut a release
+
+Push a `v*` tag (e.g. `git tag v0.1.0 && git push origin v0.1.0` — pushing remains your
+call, not an agent's) to trigger `.github/workflows/release.yml`. It builds `vocalai-cli`
+for macOS (CoreML), Windows (CPU), and Linux (CPU) — see ADR-0013 for why Windows/Linux
+CUDA-bundled artifacts are deferred (`VAI-015`) — downloads the current `shmmsra/vocal-ai-models`
+revision from HF Hub, stages each platform's bundle (binary + `models/` + `THIRD_PARTY_LICENSES`
++ `LICENSE`), structurally smoke-tests it, and uploads it as a release asset. `workflow_dispatch`
+(optionally with a specific `hf_revision`) builds and uploads a workflow artifact without cutting
+a release, for inspection.
+
+Neither workflow runs any real inference or audio synthesis — see `docs/manual-testing.md` for
+the manual, per-platform validation steps to run against a real release build before announcing
+it.

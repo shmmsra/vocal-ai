@@ -1,0 +1,129 @@
+# vocal-ai — per-platform release build + packaging (Milestone 7 / VAI-007).
+#
+# Builds vocalai-cli for macOS (CoreML) + Windows/Linux (CPU-only for now -- CUDA/cuDNN
+# bundling is deferred to VAI-015, see
+# docs/decisions/0013-hf-hub-model-distribution-and-release-packaging.md). Downloads the
+# already-published model artifacts from the public HuggingFace Hub repo
+# (models-export.yml publishes them separately, on its own manual trigger) -- this
+# workflow never re-exports or re-verifies models itself, and never runs any ONNX
+# inference: the smoke test here is structural file validation only
+# (onnx.checker.check_model, no session, no inference). Real end-to-end audio validation
+# is a manual step -- see docs/manual-testing.md.
+#
+# Triggers: a `v*` tag (also cuts a real GitHub Release) or workflow_dispatch (build +
+# upload a workflow artifact for inspection, without publishing a release).
+
+name: Release build
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      hf_revision:
+        description: "HuggingFace Hub revision to bundle (branch, tag, or commit SHA)"
+        type: string
+        default: main
+
+env:
+  HF_REPO_ID: shmmsra/vocal-ai-models
+
+jobs:
+  build:
+    name: Build + package (${{ matrix.artifact_name }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            artifact_name: vocalai-macos
+            cargo_features: --features vocalai-cli/coreml
+            binary_name: vocalai
+          - os: windows-latest
+            artifact_name: vocalai-windows-cpu
+            cargo_features: ""
+            binary_name: vocalai.exe
+          - os: ubuntu-latest
+            artifact_name: vocalai-linux-cpu
+            cargo_features: ""
+            binary_name: vocalai
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Build release binary
+        run: cargo build --release -p vocalai-cli ${{ matrix.cargo_features }}
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install packaging/smoke-test dependencies
+        run: pip install -r scripts/requirements.txt
+
+      - name: Resolve HuggingFace Hub revision
+        id: hf
+        shell: bash
+        run: |
+          REVISION="${{ inputs.hf_revision }}"
+          if [ -z "$REVISION" ]; then REVISION="main"; fi
+          SHA=$(python -c "from huggingface_hub import HfApi; print(HfApi().model_info('${{ env.HF_REPO_ID }}', revision='$REVISION').sha)")
+          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+          echo "Bundling ${{ env.HF_REPO_ID }}@$SHA (revision: $REVISION)" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Download model artifacts from HuggingFace Hub
+        shell: bash
+        run: |
+          python -c "
+          from huggingface_hub import snapshot_download
+          snapshot_download(
+              repo_id='${{ env.HF_REPO_ID }}',
+              revision='${{ steps.hf.outputs.sha }}',
+              local_dir='dist/${{ matrix.artifact_name }}/models',
+          )
+          "
+
+      - name: Stage bundle
+        shell: bash
+        run: |
+          mkdir -p dist/${{ matrix.artifact_name }}
+          cp target/release/${{ matrix.binary_name }} dist/${{ matrix.artifact_name }}/
+          cp THIRD_PARTY_LICENSES dist/${{ matrix.artifact_name }}/
+          cp LICENSE dist/${{ matrix.artifact_name }}/
+
+      - name: Structural smoke test (no inference)
+        shell: bash
+        run: |
+          python scripts/smoke_test_artifact.py \
+            --models-dir dist/${{ matrix.artifact_name }}/models \
+            --binary dist/${{ matrix.artifact_name }}/${{ matrix.binary_name }} \
+            --extra-file dist/${{ matrix.artifact_name }}/THIRD_PARTY_LICENSES \
+            --extra-file dist/${{ matrix.artifact_name }}/LICENSE
+
+      - name: Archive bundle (zip)
+        if: runner.os == 'Windows'
+        run: Compress-Archive -Path dist/${{ matrix.artifact_name }}/* -DestinationPath dist/${{ matrix.artifact_name }}.zip
+
+      - name: Archive bundle (tar.gz)
+        if: runner.os != 'Windows'
+        run: tar -C dist/${{ matrix.artifact_name }} -czf dist/${{ matrix.artifact_name }}.tar.gz .
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: |
+            dist/${{ matrix.artifact_name }}.zip
+            dist/${{ matrix.artifact_name }}.tar.gz
+          if-no-files-found: ignore
+
+      - name: Upload release asset
+        if: github.ref_type == 'tag'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/${{ matrix.artifact_name }}.zip
+            dist/${{ matrix.artifact_name }}.tar.gz
+          fail_on_unmatched_files: false

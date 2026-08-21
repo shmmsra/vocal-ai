@@ -734,4 +734,61 @@ has not yet been executed on Windows — pending a follow-up manual run.
 
 ---
 
+### Release packaging pipeline: model publish + per-platform build (VAI-007, ADR-0013)
+
+Both `models-export.yml` and `release.yml` are structural-only in CI — no real inference, no
+audio synthesis (per the repo owner's explicit instruction; see ADR-0013). The steps below are
+the manual, human-run counterpart that actually exercises a built artifact end-to-end, and must
+be run at least once per platform before announcing a release.
+
+**Test command(s)**:
+
+```bash
+# 1. Publish models (only if models/ changed since the last publish):
+gh workflow run models-export.yml
+gh run watch   # wait for it to finish
+
+# 2. Cut (or dry-run) a release build:
+git tag v0.0.0-test && git push origin v0.0.0-test   # or: gh workflow run release.yml
+gh run watch
+
+# 3. Download and unpack one platform's asset, e.g. macOS:
+gh release download v0.0.0-test -p 'vocalai-macos*'
+tar -xzf vocalai-macos.tar.gz -C vocalai-macos
+
+# 4. Real end-to-end synthesis (the thing CI deliberately does NOT do):
+./vocalai-macos/vocalai --text "hello world" --out out.wav --models-dir vocalai-macos/models
+./vocalai-macos/vocalai --text "hello world" --out out-cpu.wav --models-dir vocalai-macos/models --use-cpu
+```
+
+**Setup**: `HF_TOKEN` repo secret already configured (`docs/dev-setup.md` §10.1); `gh` CLI
+authenticated.
+
+**What to observe**:
+- `models-export.yml`'s job summary/logs: `make test-py-parity` passes (including T3), the
+  smoke-test step reports `smoke test passed: N files validated`, and the publish step prints
+  `published to https://huggingface.co/shmmsra/vocal-ai-models @ <sha>`.
+- `release.yml`'s job summary: `Bundling shmmsra/vocal-ai-models@<sha>` for each of the 3
+  matrix jobs, and each job's smoke-test step passes.
+- Step 4's two WAV files are both audible, non-silent, correct speech — `out.wav` (default EP)
+  and `out-cpu.wav` (forced `--use-cpu`) should sound equivalent (plan §8's CPU-fallback
+  criterion).
+- (Optional, plan §8's memory criterion) run `while true; do sysctl vm.swapusage; sleep 1; done`
+  during step 4 on macOS and compare swap growth against the ~5GB→~30GB PyTorch/MPS baseline
+  noted in `docs/phase1-onnx-rust-cli-plan.md` §1.
+
+**Pass criteria**: both workflows exit 0; the downloaded bundle contains a working binary +
+complete `models/` + `THIRD_PARTY_LICENSES` + `LICENSE`; both WAVs are audible and sound the
+same; clean up the test tag afterward (`git push origin :v0.0.0-test`, `gh release delete
+v0.0.0-test`).
+
+**Fail indicators**:
+- `models-export.yml` fails at the parity step: a real regression in `export/` — do not publish.
+- `release.yml`'s smoke-test step fails: a corrupted/incomplete download or build — do not ship
+  that asset.
+- `out.wav`/`out-cpu.wav` silent, crashing, or audibly different: a real runtime bug, independent
+  of anything CI can catch given the no-inference-in-CI constraint.
+
+---
+
 *Add new sections below this line as features land. Group by feature area (e.g. CLI, export pipeline, EP selection, voice cloning).*

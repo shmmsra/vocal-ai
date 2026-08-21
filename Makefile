@@ -1,4 +1,4 @@
-.PHONY: check setup-hooks test typecheck lint build clean help export
+.PHONY: check setup-hooks test typecheck lint build clean help export publish-models smoke-test
 
 # ── Help ──────────────────────────────────────────────────────────────────────
 
@@ -14,6 +14,8 @@ help:
 	@echo "  make lint          Run clippy only"
 	@echo "  make build         Build the project (auto-detects --features coreml/cuda by OS)"
 	@echo "  make export        Generate models/*.onnx + *.npy (ARGS=--with-voice-cloning for --voice support)"
+	@echo "  make smoke-test    Structural-only validation of models/ (no inference) -- see VAI-007"
+	@echo "  make publish-models  Publish models/ to the public HF Hub repo (needs HF_TOKEN)"
 	@echo "  make clean         Remove build artifacts"
 
 # ── Python interpreter selection ──────────────────────────────────────────────
@@ -33,6 +35,12 @@ endif
 
 PYTEST := $(if $(wildcard $(VENV_PY_GLOB)),$(VENV_PY) -m pytest,pytest)
 
+# Repo-root-relative interpreter for scripts/ (not cd'd into, unlike export/'s recipes
+# above) -- reuses export/.venv if present rather than maintaining a second venv. scripts/
+# only needs onnx/numpy/huggingface_hub/pytest (scripts/requirements.txt), a subset of
+# export/requirements.txt, so export/.venv already covers it.
+PY := $(if $(wildcard $(VENV_PY_GLOB)),$(VENV_PY_GLOB),python)
+
 # ── Hardware execution-provider feature auto-detection (VAI-011) ─────────────
 # `make build` compiles in the hardware EP that `--use-gpu`/auto-mode
 # (`crates/vocalai-core/src/session.rs`) can actually try on this OS: CoreML on
@@ -51,7 +59,7 @@ endif
 
 # ── Pre-commit gate ──────────────────────────────────────────────────────────
 
-check: fmt-check clippy test-rs test-py
+check: fmt-check clippy test-rs test-py test-scripts
 
 # ── Hook installation ─────────────────────────────────────────────────────────
 
@@ -92,7 +100,12 @@ test-py-parity:
 test-py-parity-ci:
 	cd export && $(PYTEST) -m "parity and not heavy_build"
 
-test: test-rs test-py
+test: test-rs test-py test-scripts
+
+# scripts/ tests (smoke_test_artifact.py, publish_models.py) -- no checkpoint download,
+# no network, no inference; fast, same category as test-py-fast.
+test-scripts:
+	$(PY) -m pytest scripts/tests
 
 lint: clippy
 
@@ -111,7 +124,20 @@ else
 	bash scripts/export-all.sh $(ARGS)
 endif
 
+# ── Model artifact publishing (VAI-007, see ADR-0013) ─────────────────────────
+# Structural-only validation (no ONNX Runtime session, no inference) of models/, and
+# publishing models/ to the public HF Hub repo. Both also run in CI
+# (.github/workflows/models-export.yml), manual-trigger-only; these targets are the local
+# equivalent for debugging. publish-models requires HF_TOKEN in the environment.
+
+smoke-test:
+	$(PY) scripts/smoke_test_artifact.py --models-dir models
+
+publish-models:
+	$(PY) scripts/publish_models.py --repo-id shmmsra/vocal-ai-models --models-dir models
+
 # ── Clean ─────────────────────────────────────────────────────────────────────
 
 clean:
-	rm -rf target/ export/__pycache__ export/.pytest_cache export/**/__pycache__
+	rm -rf target/ dist/ export/__pycache__ export/.pytest_cache export/**/__pycache__ \
+		scripts/__pycache__ scripts/.pytest_cache scripts/**/__pycache__

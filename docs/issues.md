@@ -44,18 +44,35 @@ Tickets use the prefix `VAI-NNN`, numbered sequentially (e.g. `VAI-001`, `VAI-00
 
 ## Open Issues
 
-### VAI-007 · P2 · OPEN · Milestone 7
+### VAI-007 · P2 · IN PROGRESS (2026-08-21) · Milestone 7
 **Per-platform packaging: artifact matrix, bundling, smoke tests**
 
-**Acceptance criteria**:
-- [ ] Build artifact matrix per §2.3: `vocalai-macos` (CoreML→CPU), `vocalai-windows-cuda`, `vocalai-linux-cuda`, `vocalai-{win,linux}-cpu`
-- [ ] GPU artifacts bundle required CUDA/cuDNN libs; macOS/CPU artifacts stay lean
-- [ ] Model weights bundled into each release artifact
-- [ ] Each artifact smoke-tested; CPU-fallback EP forcing produces equivalent output
-- [ ] Memory/swap measured against the PyTorch/MPS baseline (§8) on the same hardware
-- [ ] Docs updated (CHANGELOG, STATUS, manual-testing)
+**Acceptance criteria** (narrowed scope — CUDA-bundled GPU artifacts split out to VAI-015; see
+ADR-0013 for the full rationale):
+- [x] `.github/workflows/models-export.yml`: manual-trigger export → full `make test-py-parity`
+  gate (including T3) → structural smoke test → publish to public HF Hub repo
+  (`shmmsra/vocal-ai-models`)
+- [x] `.github/workflows/release.yml`: build artifact matrix — `vocalai-macos` (CoreML→CPU),
+  `vocalai-windows-cpu`, `vocalai-linux-cpu` — on a `v*` tag or manual dispatch
+- [x] Model weights downloaded from HF Hub and bundled into each release artifact at build time
+- [x] Each artifact structurally smoke-tested in CI (no inference); `THIRD_PARTY_LICENSES`
+  included (fulfills ADR-0008)
+- [ ] Repo owner: flip GitHub visibility to public, add `HF_TOKEN` repo secret (both human-only,
+  not done by the agent)
+- [ ] A real `models-export.yml` run against the live public HF repo
+- [ ] A real `v*` tag / `release.yml` run producing real release assets
+- [ ] Manual per-platform validation (`docs/manual-testing.md`): real end-to-end audio,
+  CPU-fallback EP forcing produces equivalent output, memory/swap measured against the
+  PyTorch/MPS baseline (§8) on the same hardware
+- [ ] Docs updated (CHANGELOG, STATUS, manual-testing) — done for the workflow/tooling landing;
+  revisit once the above manual steps complete
 
-**Notes**: Depends on `VAI-006`. See `docs/phase1-onnx-rust-cli-plan.md` §7 Milestone 7 and §8 Verification/Exit Criteria (full list).
+**Notes**: Depends on `VAI-006`. See `docs/phase1-onnx-rust-cli-plan.md` §7 Milestone 7 and §8
+Verification/Exit Criteria (full list), and `docs/decisions/0013-hf-hub-model-distribution-and-release-packaging.md`
+for the distribution-design decisions (bundle-at-build, CI-driven export/publish, structural-only
+smoke tests, corrected GitHub-hosted-runner specs). Windows/Linux CUDA/cuDNN bundling split out
+as `VAI-015`. `VAI-013` (GitHub Actions cross-platform build matrix) is likely superseded by
+`release.yml` — not closed here, pending confirmation.
 
 ---
 
@@ -82,6 +99,30 @@ Tickets use the prefix `VAI-NNN`, numbered sequentially (e.g. `VAI-001`, `VAI-00
 - [ ] Explicitly out of scope: running/verifying real GPU-path inference in CI (would need a GPU-enabled runner, self-hosted or paid)
 
 **Notes**: Raised by the user while reviewing VAI-011; deferred to its own ticket rather than bundled in.
+
+**Update (2026-08-21)**: `VAI-007`'s `.github/workflows/release.yml` already delivers this
+ticket's acceptance criteria (matrix build on macos-latest/windows-latest/ubuntu-latest,
+build-only verified without GPU hardware, artifacts uploaded per OS, GPU inference explicitly
+out of scope). Likely superseded — not closed here pending the repo owner's confirmation once
+VAI-007's workflows have actually run.
+
+---
+
+### VAI-015 · P3 · OPEN · CI/Release
+**Windows/Linux CUDA/cuDNN-bundled GPU release artifacts**
+
+**Acceptance criteria**:
+- [ ] `vocalai-windows-cuda`/`vocalai-linux-cuda` artifacts in `release.yml`: built with
+  `--features vocalai-cli/cuda`, bundling the required CUDA runtime + cuDNN libs (plan §2.3)
+- [ ] NVIDIA's redistribution terms for the bundled CUDA runtime + cuDNN libs checked and
+  recorded (an ADR), same rigor as ADR-0008's model-weight license check — not yet done
+- [ ] Real GPU-hardware smoke test (structural-only CI smoke test doesn't cover actual CUDA
+  inference — per the repo owner's instruction, that stays manual; see `docs/manual-testing.md`)
+- [ ] Docs updated (CHANGELOG, STATUS, manual-testing, dev-setup)
+
+**Notes**: Split out of `VAI-007` (see `docs/decisions/0013-hf-hub-model-distribution-and-release-packaging.md`)
+because it needs real Windows/Linux+GPU hardware to verify on and an unresolved licensing
+question, neither of which blocked shipping the CoreML+CPU-only artifact matrix.
 
 ---
 
@@ -115,6 +156,35 @@ prebuilt binary yet, same Rust/Python toolchain as §1–2 either way), so the s
 blurry. Revisit once Milestone 7 (`VAI-007`) ships prebuilt binaries + bundled models, when a real
 end-user usage doc (no Rust/Python toolchain, no `make`) becomes a genuinely different document
 for a genuinely different reader. Depends on `VAI-007`.
+
+---
+
+### VAI-016 · P3 · OPEN · CI/Release
+**Version-bump-driven triggers for the model-publish + release pipelines (replace manual dispatch)**
+
+**Acceptance criteria**:
+- [ ] Promote the duplicated `version = "0.1.0"` in `vocalai-cli`/`vocalai-core`'s `Cargo.toml` to
+      a single `[workspace.package] version`, inherited via `version.workspace = true` — one
+      source of truth for the CLI/package version.
+- [ ] A new root-level `MODELS_VERSION` file (plain text) as the model artifacts' version — no
+      existing home for this since `models/` is git-ignored.
+- [ ] A workflow step/job that, on push to `main`, compares each version against its last
+      matching git tag (`v*` for the Cargo version, `models-v*` for `MODELS_VERSION`) and only
+      proceeds if it actually changed — avoids firing on unrelated edits to either file.
+- [ ] On a genuine model-version bump: auto-create/push a `models-vN` tag and trigger
+      `models-export.yml` (no more manual `workflow_dispatch`); tag the published HF Hub revision
+      to match.
+- [ ] On a genuine package-version bump: auto-create/push a `vX.Y.Z` tag, which triggers the
+      existing tag-triggered path in `release.yml` unchanged.
+- [ ] Release notes standardized via GitHub's built-in `generate_release_notes: true` (already
+      supported by `softprops/action-gh-release`) instead of hand-rolled commit-range diffing.
+- [ ] `docs/dev-setup.md` §10 updated to describe "bump the version file, push" instead of manual
+      `gh workflow run`/tag commands; `docs/manual-testing.md` updated to match.
+
+**Notes**: Raised by the repo owner while reviewing `VAI-007`; deliberately split out rather than
+bundled in, so `VAI-007`'s already-tested manual-trigger pipeline could ship and get a first real
+run before adding an automatic-triggering layer on top. See the `VAI-007` session (2026-08-21) for
+the design discussion this ticket summarizes.
 
 ---
 

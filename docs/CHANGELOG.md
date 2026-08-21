@@ -6,6 +6,60 @@
 
 ---
 
+## 2026-08-21 — VAI-007 (part 1): CI-driven model publish + release-build pipeline
+
+**What changed**: Added two manual-trigger-only GitHub Actions workflows —
+`.github/workflows/models-export.yml` (runs `make export`, gates on the *full*
+`make test-py-parity` including T3, structurally validates the result with no inference
+(`scripts/smoke_test_artifact.py`), then publishes to the public HuggingFace Hub repo
+`shmmsra/vocal-ai-models`) and `.github/workflows/release.yml` (matrix build of `vocalai-cli` for
+macOS/CoreML + Windows/Linux CPU-only, downloads the current HF Hub revision, stages a bundle
+with the binary + `models/` + `THIRD_PARTY_LICENSES` + `LICENSE`, structurally smoke-tests it,
+uploads as a release asset on a `v*` tag). Added `scripts/publish_models.py`,
+`scripts/smoke_test_artifact.py`, and 14 new pytest tests for both (`make test-scripts`, wired
+into `make check` and `ci.yml`'s fast gate). Added `THIRD_PARTY_LICENSES` (verbatim MIT notices
+for `resemble-perth` + `ResembleAI/chatterbox`, fulfilling ADR-0008's standing commitment). Added
+`make smoke-test`/`make publish-models` for local debugging. Also added `license = "MIT"` to
+`vocalai-cli`/`vocalai-core`'s `Cargo.toml` (cosmetic — `cargo metadata` previously reported them
+as unlicensed even though the repo-level `LICENSE` already covered them; found while auditing the
+repo for anything that would block making it public — no legal blockers found: no secrets/keys
+ever committed, no accidentally-committed weights/audio, and every dependency in both the Rust
+crate tree and the Python `export/` toolchain is permissively licensed). See ADR-0013 for the
+full design.
+
+**Why**: The repo owner is making the GitHub repo public and wants generated `.onnx`/`.npy`
+artifacts published to HF Hub, with export/publish running in CI rather than locally, and with
+an explicit constraint that automated checks must never execute real model inference (CPU or
+GPU). Along the way, this session's — and the repo owner's — initial assumptions about
+GitHub-hosted runner specs turned out to be wrong (verified against GitHub's current docs):
+`macos-latest` is 7GB RAM, not 14GB (that figure is the legacy `-intel` label); going public
+gives `ubuntu-latest` 16GB (double the 8GB private cap), which is what actually makes running
+T3's ~9GB-peak export in CI viable — and is why `models-export.yml` runs on `ubuntu-latest`, not
+macOS.
+
+**What was rejected**: a download-on-first-run CLI (bundle-at-build was chosen, keeping the
+original offline-first design goal); running export/publish on `macos-latest` for its RAM (the
+real spec is worse than public `ubuntu-latest`, once checked); auto-triggering
+`models-export.yml` on `export/**` pushes (repo owner wants manual-only — publishing to a public
+model repo should be deliberate); a git-tracked `MODEL_REVISION` pin file auto-committed by CI
+(HF Hub is queried directly at build time instead, avoiding a bot-commits-to-main pattern);
+building the full Windows/Linux CUDA/cuDNN-bundled GPU artifacts now (split out to a new ticket,
+`VAI-015` — needs real GPU hardware and an unresolved NVIDIA redistribution-license question);
+retiring ADR-0007's `parity.yml` T3 exclusion (left as a flagged, optional follow-up per the repo
+owner's call, not done in this pass).
+
+**What's next**: this is packaging/tooling only — nothing has actually run yet. The repo is now
+public and `HF_TOKEN` is set; still need to trigger a real `models-export.yml` publish and cut a
+first real `v*` tag, then run the manual per-platform validation in `docs/manual-testing.md`
+(real audio, CPU-fallback equivalence, memory/swap benchmark) before Milestone 7 can be called
+done. `VAI-013` is likely superseded by `release.yml`'s build matrix, pending confirmation.
+`VAI-016` (new, split out of this session) tracks replacing the manual `workflow_dispatch`/
+tag-push triggers with version-bump-driven ones (a `MODELS_VERSION` file + a `Cargo.toml`
+workspace version, plus standardized GitHub-native release notes) — deliberately deferred until
+the manual-trigger pipeline gets a first real run.
+
+---
+
 ## 2026-08-20 — Correction: VAI-011's "CoreML tuning reaches CPU parity" claim was overstated
 
 **What changed**: no code changes. Corrected `docs/decisions/0012-*.md`, `docs/CHANGELOG.md`

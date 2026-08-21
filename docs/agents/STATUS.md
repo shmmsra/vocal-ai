@@ -21,7 +21,8 @@
 | 1 — Milestone 6, part B.1 (VAI-006): wire the default-voice pipeline + CLI | ✅ Complete (real end-to-end audio verified for arbitrary text, VAI-009 unblocked it) |
 | 1 — Milestone 6, part B.2 (VAI-006): `--voice` zero-shot cloning | ✅ Complete (see ADR-0011; produces non-silent audio end-to-end after a bug fix caught by manual testing, see `docs/CHANGELOG.md`; audible speaker-resemblance confirmation still pending) |
 | 1 — VAI-009: re-export HiFiGAN with a dynamic-length `speech_feat` input | ✅ Complete |
-| 1 — Milestone 7: per-platform packaging (see `docs/phase1-onnx-rust-cli-plan.md` §7) | 📋 Planned |
+| 1 — Milestone 7 (VAI-007): per-platform packaging — macOS/CoreML + Windows/Linux CPU (see `docs/phase1-onnx-rust-cli-plan.md` §7, ADR-0013) | 🔄 In progress |
+| 1 — VAI-015: Windows/Linux CUDA/cuDNN-bundled GPU artifacts (split out of VAI-007) | 📋 Planned |
 
 *Update this table as phases progress. Use ✅ Complete / 🔄 In progress / 📋 Planned / 🚫 Blocked.*
 
@@ -57,7 +58,12 @@ submodule), and now the S3Gen flow-encoder (`check_s3gen_flow_encoder`, all 6 `T
 checked for both ONNX-vs-eager match and padding invariance) and CAMPPlus
 (`check_campplus`, single fixed 400-frame graph) — these download the Chatterbox checkpoint from
 HuggingFace on first run (PerthNet's weights ship inside the `resemble-perth` package itself, no
-download needed) and require `export/requirements.txt` installed, see `docs/dev-setup.md`).
+download needed) and require `export/requirements.txt` installed, see `docs/dev-setup.md`) + 14 real Python tests
+in `scripts/tests/` (VAI-007: `test_smoke_test_artifact.py` covers pass/fail behavior of the
+structural ONNX/npy/tokenizer-json/binary-`--version`/extra-file checks against synthetic fixtures
+— including a real minimal valid ONNX model built with `onnx.helper` — with no real model file or
+checkpoint needed; `test_publish_models.py` covers `HF_TOKEN`-presence validation and the
+missing-dir/no-`.onnx`-files guard clauses, without touching the network or HfApi).
 `make check` passes cleanly — verified on both POSIX and Windows/MSVC as of 2026-08-18 (see
 ADR-0010 for the two Windows-only breakages that were fixed: a `tokenizers`/`esaxx-rs` static-CRT
 link mismatch, and a non-portable `test-py` recipe). No placeholder/ignored tests remain.
@@ -143,6 +149,30 @@ demonstrated speed win. CPU stays the default on this evidence; `--use-gpu` stay
 real improvement over the naive config, and not worth removing) but should not be recommended for
 speed. See `docs/decisions/0012-*.md` and `docs/CHANGELOG.md`'s 2026-08-20 entry for the full story.
 
+**In progress (VAI-007, ADR-0013, started 2026-08-21)**: per-platform packaging. Two new
+manual-trigger-only GitHub Actions workflows: `models-export.yml` (`ubuntu-latest` — exports
+every `.onnx`/`.npy` via `make export`, gates on the **full** `make test-py-parity` including T3,
+structurally validates the result with no inference (`scripts/smoke_test_artifact.py`), then
+publishes to the public HF Hub repo `shmmsra/vocal-ai-models`) and `release.yml` (matrix of
+`macos-latest`/CoreML, `windows-latest`/CPU, `ubuntu-latest`/CPU — builds `vocalai-cli`, downloads
+the current HF Hub revision, stages a bundle with the binary + `models/` + `THIRD_PARTY_LICENSES`
++ `LICENSE`, structural-smoke-tests it, uploads as a release asset on a `v*` tag). Both smoke
+tests are deliberately structural-only (`onnx.checker.check_model`, `.npy` load, `tokenizer.json`
+parse, `<binary> --version`) — no ONNX Runtime session, no inference, no audio, per explicit
+instruction; real end-to-end audio/CPU-fallback/memory validation stays a manual per-platform step
+(`docs/manual-testing.md`). Windows/Linux CUDA/cuDNN-bundled GPU artifacts are deferred to VAI-015
+— this pass only ships CoreML + CPU-only artifacts, all buildable/verifiable on standard public
+GitHub-hosted runners with no new licensing research. Also added: `THIRD_PARTY_LICENSES` (verbatim
+MIT notices, fulfilling ADR-0008's standing commitment), `scripts/publish_models.py` +
+`scripts/smoke_test_artifact.py` + their tests (`make test-scripts`, wired into `make check`/
+`ci.yml`), `make publish-models`/`make smoke-test` for local debugging. Corrected a runner-spec
+assumption along the way (see ADR-0013): `macos-latest` is 7GB RAM, not 14GB (the 14GB figure is
+the legacy `-intel` label); going public gives `ubuntu-latest` 16GB (double the 8GB private cap),
+which is why model export (including T3's ~9GB peak) runs there, not on macOS. Not yet done:
+actually running these workflows against the real public repo/secret (requires the repo owner to
+flip GitHub visibility to public and add the `HF_TOKEN` secret — both explicitly left as
+human-only steps, not run by the agent), and a first real tagged release.
+
 **CI**: split into two workflows since 2026-08-17 — `.github/workflows/ci.yml` (fast:
 fmt/clippy/`cargo test`/`pytest -m "not parity"`) and `.github/workflows/parity.yml` (real-
 checkpoint ONNX-vs-PyTorch tests, `pytest -m "parity and not heavy_build"` — 7 of the 8:
@@ -161,16 +191,28 @@ test-py-parity`/`make check`) and must be run manually before committing changes
 
 The next logical work, in priority order. Update at the end of every session.
 
-1. Milestone 7 (VAI-007) — per-platform packaging: artifact matrix (macOS/CoreML,
-   Windows/Linux CUDA, CPU fallback), bundling model weights, smoke tests. See
-   `docs/phase1-onnx-rust-cli-plan.md` §7 Milestone 7. Note the resourcing question already
-   flagged in "Deferred" below (T3's ~9GB export-time memory) before starting the
-   build-generation pipeline.
-2. VAI-014 — bucket `s3gen_estimator.onnx`'s time dimension so CoreML covers the full pipeline
+1. VAI-007 — finish per-platform packaging: the workflows/scripts landed this session
+   (`models-export.yml`, `release.yml`, `THIRD_PARTY_LICENSES`, smoke-test tooling — see the
+   "In progress" note above and ADR-0013), but nothing has actually *run* yet. Remaining:
+   repo owner flips GitHub visibility to public + adds the `HF_TOKEN` secret (both human-only),
+   then trigger `models-export.yml` for a real publish and cut a first real `v*` tag, then run
+   the manual per-platform validation in `docs/manual-testing.md` (real audio, CPU-fallback
+   equivalence, memory/swap benchmark) before calling Milestone 7 done.
+2. VAI-015 — Windows/Linux CUDA/cuDNN-bundled GPU release artifacts (split out of VAI-007,
+   ADR-0013): needs real GPU hardware to smoke-test and an NVIDIA redistribution-license check
+   that hasn't been done yet (only the model weights were checked, in ADR-0008).
+3. VAI-014 — bucket `s3gen_estimator.onnx`'s time dimension so CoreML covers the full pipeline
    with no CPU carve-out (see the VAI-011 residual-risk note above for the diagnosis).
-3. VAI-012 — `--show-progress` console progress indicator (split out of VAI-011).
-4. VAI-013 — GitHub Actions cross-platform release-build matrix (Windows/macOS/Linux).
-5. See `docs/issues.md` for the full tracked-ticket list.
+4. VAI-012 — `--show-progress` console progress indicator (split out of VAI-011).
+5. VAI-013 — likely superseded by VAI-007's `release.yml` build matrix; confirm and close once
+   VAI-007 lands (not closed unilaterally — see `docs/issues.md`).
+6. VAI-016 — version-bump-driven triggers for `models-export.yml`/`release.yml` (replace manual
+   `workflow_dispatch`/tag-push with a `MODELS_VERSION` file + `Cargo.toml` workspace version bump
+   detection, plus standardized GitHub-native release notes). Deliberately split out of VAI-007 so
+   the manual-trigger pipeline could ship and get a first real run first.
+7. Candidate, not yet scoped: revisit ADR-0007's `parity.yml` T3 exclusion now that public
+   `ubuntu-latest` has 16GB RAM (see ADR-0013) — newly viable, not required.
+8. See `docs/issues.md` for the full tracked-ticket list.
 
 ---
 

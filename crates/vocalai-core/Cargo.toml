@@ -2,6 +2,7 @@
 name = "vocalai-core"
 version = "0.1.0"
 edition = "2021"
+license = "MIT"
 
 [dependencies]
 ort = { version = "=2.0.0-rc.13", features = ["ndarray", "tracing"] }
