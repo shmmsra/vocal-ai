@@ -6,6 +6,31 @@
 
 ---
 
+## 2026-08-21 — VAI-007 fix: THIRD_PARTY_LICENSES was missing from the published HF Hub repo
+
+**What changed**: `scripts/publish_models.py` now also uploads `THIRD_PARTY_LICENSES` into the
+public HF Hub model repo (same temp-write-then-cleanup pattern already used for the generated
+`README.md` model card). Added a regression test
+(`test_publish_rejects_missing_third_party_licenses`) and a guard clause that fails fast if the
+source file is missing.
+
+**Why**: the repo owner noticed, after the first real `models-export.yml` run, that
+`https://huggingface.co/shmmsra/vocal-ai-models` had no license file, only a README whose
+`license: mit` front matter is metadata, not the actual notice text MIT requires. The original
+design (ADR-0013) only copied `THIRD_PARTY_LICENSES` into the CLI release bundle, missing that
+the HF Hub repo is itself a separate redistribution of the same weights and needs the same
+notice.
+
+**What was rejected**: nothing structural — this is a straightforward gap-fill within the
+already-approved ADR-0013 design, not a new decision; ADR-0013 §8 amended in place with an
+addendum rather than superseded.
+
+**What's next**: re-run `models-export.yml` (or `make publish-models` locally with `HF_TOKEN`
+set — HF Hub's content-addressed storage means this won't re-upload the unchanged multi-GB
+model files, just add the one new file) to backfill the already-published repo.
+
+---
+
 ## 2026-08-21 — VAI-007 (part 1): CI-driven model publish + release-build pipeline
 
 **What changed**: Added two manual-trigger-only GitHub Actions workflows —

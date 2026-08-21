@@ -111,7 +111,14 @@ redistribution-license check for NVIDIA's runtime libs that hasn't been done
 
 **8. `THIRD_PARTY_LICENSES`** added at the repo root and copied into every
 bundle, fulfilling ADR-0008's standing commitment (verbatim MIT notices for
-`resemble-perth` and `ResembleAI/chatterbox`).
+`resemble-perth` and `ResembleAI/chatterbox`). **Addendum (2026-08-21, caught by
+the repo owner after the first real `models-export.yml` run):** the public HF
+Hub repo is itself a redistribution of these weights, not just the CLI release
+bundle -- MIT's notice-inclusion condition applies there too. The model card's
+`license: mit` front matter is metadata, not the notice text itself, so
+`scripts/publish_models.py` now also copies `THIRD_PARTY_LICENSES` into the
+HF repo alongside the exported files (same temp-write-then-cleanup pattern
+already used for the generated `README.md`).
 
 ## Rationale
 

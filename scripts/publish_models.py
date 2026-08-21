@@ -14,11 +14,14 @@ from __future__ import annotations
 
 import argparse
 import os
+import shutil
 import sys
 from pathlib import Path
 
 DEFAULT_REPO_ID = "shmmsra/vocal-ai-models"
-DEFAULT_MODELS_DIR = Path(__file__).resolve().parent.parent / "models"
+REPO_ROOT = Path(__file__).resolve().parent.parent
+DEFAULT_MODELS_DIR = REPO_ROOT / "models"
+THIRD_PARTY_LICENSES_SRC = REPO_ROOT / "THIRD_PARTY_LICENSES"
 
 MODEL_CARD = """---
 license: mit
@@ -35,8 +38,8 @@ ONNX graphs and auxiliary `.npy` tensors exported from
 [vocal-ai](https://github.com/shmmsra/vocal-ai), a standalone Rust + ONNX Runtime TTS CLI.
 
 These files are dev-time build artifacts, not source -- see vocal-ai's `export/` scripts
-for how they're produced, and this repo's own `THIRD_PARTY_LICENSES` file (in the
-vocal-ai release bundles) for the upstream license notices.
+for how they're produced. See `THIRD_PARTY_LICENSES` in this repo (also carried into every
+vocal-ai release bundle) for the upstream license notices these weights require.
 """
 
 
@@ -64,6 +67,8 @@ def publish(models_dir: Path, repo_id: str, token: str, commit_message: str) -> 
         raise PublishError(f"models dir not found: {models_dir}")
     if not any(models_dir.rglob("*.onnx")):
         raise PublishError(f"no .onnx files found under {models_dir} -- run `make export` first")
+    if not THIRD_PARTY_LICENSES_SRC.is_file():
+        raise PublishError(f"THIRD_PARTY_LICENSES not found at {THIRD_PARTY_LICENSES_SRC}")
 
     from huggingface_hub import HfApi
 
@@ -75,6 +80,15 @@ def publish(models_dir: Path, repo_id: str, token: str, commit_message: str) -> 
     if wrote_readme:
         readme.write_text(MODEL_CARD, encoding="utf-8")
 
+    # MIT requires the copyright/license notice to travel with redistributed copies -- the
+    # HF Hub repo is itself a redistribution of these weights, not just the CLI release
+    # bundle, so the notice belongs here too (see the repo owner's question that caught this
+    # gap: the model card's `license: mit` front matter is metadata, not the notice text).
+    license_dest = models_dir / "THIRD_PARTY_LICENSES"
+    wrote_license = not license_dest.exists()
+    if wrote_license:
+        shutil.copyfile(THIRD_PARTY_LICENSES_SRC, license_dest)
+
     try:
         commit_info = api.upload_folder(
             folder_path=str(models_dir),
@@ -85,6 +99,8 @@ def publish(models_dir: Path, repo_id: str, token: str, commit_message: str) -> 
     finally:
         if wrote_readme:
             readme.unlink(missing_ok=True)
+        if wrote_license:
+            license_dest.unlink(missing_ok=True)
 
     return commit_info.oid
 
