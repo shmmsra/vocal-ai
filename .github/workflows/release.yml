@@ -28,6 +28,14 @@ on:
 env:
   HF_REPO_ID: shmmsra/vocal-ai-models
 
+# Explicit, least-privilege permission for the auto-provided GITHUB_TOKEN --
+# softprops/action-gh-release needs `contents: write` to create a release and upload
+# assets. Declared here rather than relying on the repo's "Workflow permissions" default
+# (Settings -> Actions -> General), which defaults to read-only on many repos and 403s
+# otherwise ("Resource not accessible by integration").
+permissions:
+  contents: write
+
 jobs:
   build:
     name: Build + package (${{ matrix.artifact_name }})
@@ -114,16 +122,14 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact_name }}
-          path: |
-            dist/${{ matrix.artifact_name }}.zip
-            dist/${{ matrix.artifact_name }}.tar.gz
-          if-no-files-found: ignore
+          # A single glob, not separate .zip/.tar.gz lines -- each OS only ever produces
+          # one of the two, and an explicit line for the one that doesn't exist logs a
+          # (harmless, but noisy) "Pattern ... does not match any files" warning.
+          path: dist/${{ matrix.artifact_name }}.*
+          if-no-files-found: error
 
       - name: Upload release asset
         if: github.ref_type == 'tag'
         uses: softprops/action-gh-release@v2
         with:
-          files: |
-            dist/${{ matrix.artifact_name }}.zip
-            dist/${{ matrix.artifact_name }}.tar.gz
-          fail_on_unmatched_files: false
+          files: dist/${{ matrix.artifact_name }}.*

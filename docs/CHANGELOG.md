@@ -6,6 +6,31 @@
 
 ---
 
+## 2026-08-21 — VAI-007 fix: release.yml's GITHUB_TOKEN lacked permission to create a release
+
+**What changed**: added an explicit `permissions: contents: write` block to
+`.github/workflows/release.yml`. Also simplified the artifact-upload/release-asset `files:`/
+`path:` args from two explicit `.zip`/`.tar.gz` lines to a single `dist/<artifact>.*` glob (each
+OS only ever produces one of the two; the unconditional second line was logging a harmless but
+noisy "Pattern ... does not match any files" warning), and changed `upload-artifact`'s
+`if-no-files-found` from `ignore` to `error` now that the glob makes "nothing matched" a real bug
+worth failing loud on.
+
+**Why**: the first real tag-triggered run of `release.yml` failed all 3 platform jobs at the
+"Upload release asset" step with a 403 ("Resource not accessible by integration") from
+`softprops/action-gh-release`. The auto-provided `GITHUB_TOKEN` only gets the permissions a
+workflow explicitly declares (or a repo-wide default, which is read-only on many repos) --
+`contents: write` was never declared, so release creation failed.
+
+**What was rejected**: changing the repo's Settings -> Actions -> General -> Workflow
+permissions default instead -- rejected in favor of declaring the permission explicitly in the
+workflow file itself: least-privilege, portable across repos/orgs, and doesn't depend on a
+manual UI setting a future contributor could miss.
+
+**What's next**: re-push the `v0.1.0` tag (delete + re-push, or bump to `v0.1.1`) to retry.
+
+---
+
 ## 2026-08-21 — VAI-007 fix: THIRD_PARTY_LICENSES was missing from the published HF Hub repo
 
 **What changed**: `scripts/publish_models.py` now also uploads `THIRD_PARTY_LICENSES` into the
