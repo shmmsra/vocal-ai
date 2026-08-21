@@ -49,7 +49,13 @@ jobs:
           python-version: '3.12'
 
       - name: Install Python export/ dependencies
-        run: pip install -r export/requirements.txt
+        # `make export` shells out to scripts/export-all.sh, which hard-requires a real venv at
+        # export/.venv/bin/python (matching docs/dev-setup.md §2's local setup) rather than
+        # falling back to the system interpreter -- so create that venv here instead of installing
+        # into the runner's global Python.
+        run: |
+          python -m venv export/.venv
+          export/.venv/bin/pip install -r export/requirements.txt
 
       - name: Export model artifacts
         run: |
@@ -63,9 +69,9 @@ jobs:
         run: make test-py-parity
 
       - name: Structural smoke test (no inference -- file validation only)
-        run: python scripts/smoke_test_artifact.py --models-dir models
+        run: export/.venv/bin/python scripts/smoke_test_artifact.py --models-dir models
 
       - name: Publish to HuggingFace Hub
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
-        run: python scripts/publish_models.py --repo-id shmmsra/vocal-ai-models --models-dir models
+        run: export/.venv/bin/python scripts/publish_models.py --repo-id shmmsra/vocal-ai-models --models-dir models
