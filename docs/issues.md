@@ -54,13 +54,20 @@ ADR-0013 for the full rationale):
   (`shmmsra/vocal-ai-models`)
 - [x] `.github/workflows/release.yml`: build artifact matrix — `vocalai-macos` (CoreML→CPU),
   `vocalai-windows-cpu`, `vocalai-linux-cpu` — on a `v*` tag or manual dispatch
-- [x] Model weights downloaded from HF Hub and bundled into each release artifact at build time
-- [x] Each artifact structurally smoke-tested in CI (no inference); `THIRD_PARTY_LICENSES`
-  included (fulfills ADR-0008)
-- [ ] Repo owner: flip GitHub visibility to public, add `HF_TOKEN` repo secret (both human-only,
-  not done by the agent)
-- [ ] A real `models-export.yml` run against the live public HF repo
-- [ ] A real `v*` tag / `release.yml` run producing real release assets
+- [x] Model weights downloaded from HF Hub inside the release job and structurally validated;
+  **not** archived into the release asset (see ADR-0013's 2026-08-21 addendum — GitHub caps
+  release assets at 2GiB/file, the ~4GB model set doesn't fit). `THIRD_PARTY_LICENSES` is still
+  bundled with the binary (fulfills ADR-0008).
+- [x] `scripts/install.sh`/`install.ps1` + `README.md` "Install" section: one-line installer that
+  fetches the release binary from GitHub and every model file from the public HF repo
+  (anonymously, no token) into `./vocalai/` — the effective replacement for "bundle everything
+  into one artifact"
+- [x] Repo owner: flipped GitHub visibility to public, added `HF_TOKEN` repo secret
+- [x] A real `models-export.yml` run against the live public HF repo — verified (26 model files
+  present, `THIRD_PARTY_LICENSES` byte-identical, structural smoke test passes on a fresh
+  download)
+- [ ] A real `v*` tag / `release.yml` run producing a real, downloadable release asset (in
+  progress — `v0.1.0`/`v0.1.1` hit the permissions and asset-size bugs above; retry pending)
 - [ ] Manual per-platform validation (`docs/manual-testing.md`): real end-to-end audio,
   CPU-fallback EP forcing produces equivalent output, memory/swap measured against the
   PyTorch/MPS baseline (§8) on the same hardware

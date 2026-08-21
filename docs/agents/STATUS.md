@@ -155,23 +155,34 @@ every `.onnx`/`.npy` via `make export`, gates on the **full** `make test-py-pari
 structurally validates the result with no inference (`scripts/smoke_test_artifact.py`), then
 publishes to the public HF Hub repo `shmmsra/vocal-ai-models`) and `release.yml` (matrix of
 `macos-latest`/CoreML, `windows-latest`/CPU, `ubuntu-latest`/CPU — builds `vocalai-cli`, downloads
-the current HF Hub revision, stages a bundle with the binary + `models/` + `THIRD_PARTY_LICENSES`
-+ `LICENSE`, structural-smoke-tests it, uploads as a release asset on a `v*` tag). Both smoke
-tests are deliberately structural-only (`onnx.checker.check_model`, `.npy` load, `tokenizer.json`
-parse, `<binary> --version`) — no ONNX Runtime session, no inference, no audio, per explicit
-instruction; real end-to-end audio/CPU-fallback/memory validation stays a manual per-platform step
-(`docs/manual-testing.md`). Windows/Linux CUDA/cuDNN-bundled GPU artifacts are deferred to VAI-015
-— this pass only ships CoreML + CPU-only artifacts, all buildable/verifiable on standard public
-GitHub-hosted runners with no new licensing research. Also added: `THIRD_PARTY_LICENSES` (verbatim
-MIT notices, fulfilling ADR-0008's standing commitment), `scripts/publish_models.py` +
-`scripts/smoke_test_artifact.py` + their tests (`make test-scripts`, wired into `make check`/
-`ci.yml`), `make publish-models`/`make smoke-test` for local debugging. Corrected a runner-spec
-assumption along the way (see ADR-0013): `macos-latest` is 7GB RAM, not 14GB (the 14GB figure is
-the legacy `-intel` label); going public gives `ubuntu-latest` 16GB (double the 8GB private cap),
-which is why model export (including T3's ~9GB peak) runs there, not on macOS. Not yet done:
-actually running these workflows against the real public repo/secret (requires the repo owner to
-flip GitHub visibility to public and add the `HF_TOKEN` secret — both explicitly left as
-human-only steps, not run by the agent), and a first real tagged release.
+the current HF Hub revision to structurally validate it, stages a **binary-only** bundle
+(`THIRD_PARTY_LICENSES` + `LICENSE`, no `models/`), smoke-tests it, uploads as a release asset on
+a `v*` tag). Both smoke tests are deliberately structural-only (`onnx.checker.check_model`, `.npy`
+load, `tokenizer.json` parse, `<binary> --version`) — no ONNX Runtime session, no inference, no
+audio, per explicit instruction; real end-to-end audio/CPU-fallback/memory validation stays a
+manual per-platform step (`docs/manual-testing.md`). Windows/Linux CUDA/cuDNN-bundled GPU
+artifacts are deferred to VAI-015 — this pass only ships CoreML + CPU-only artifacts, all
+buildable/verifiable on standard public GitHub-hosted runners with no new licensing research.
+Also added: `THIRD_PARTY_LICENSES` (verbatim MIT notices, fulfilling ADR-0008's standing
+commitment), `scripts/publish_models.py` + `scripts/smoke_test_artifact.py` + their tests (`make
+test-scripts`, wired into `make check`/`ci.yml`), `make publish-models`/`make smoke-test` for
+local debugging, and `scripts/install.sh`/`install.ps1` + `README.md`'s "Install" section (a
+one-line installer fetching the release binary + every model file from the public HF repo,
+anonymously, into `./vocalai/`). Corrected a runner-spec assumption along the way (see ADR-0013):
+`macos-latest` is 7GB RAM, not 14GB (the 14GB figure is the legacy `-intel` label); going public
+gives `ubuntu-latest` 16GB (double the 8GB private cap), which is why model export (including
+T3's ~9GB peak) runs there, not on macOS. **Real runs surfaced three real bugs, all fixed**: (1)
+`models-export.yml` installed Python deps globally instead of into the venv `make export`
+requires; (2) `scripts/publish_models.py` never uploaded `THIRD_PARTY_LICENSES` to the HF repo
+itself, only into CLI release bundles, missing that MIT's notice condition applies to *every*
+redistribution channel; (3) `release.yml` lacked `contents: write`, so `GITHUB_TOKEN` couldn't
+create a release (403); and one real *design* correction: GitHub Releases caps assets at
+2GiB/file, so the ~4GB model set can never be bundled into one release asset regardless of
+compression — `release.yml` now ships binary-only, with the install scripts fetching models
+separately from HF (see ADR-0013's 2026-08-21 addendum). Model publishing is now verified working
+end-to-end (26 files, byte-identical license notice, structural smoke test passes on a fresh
+download). Not yet done: a real, fully-succeeding tagged `release.yml` run producing a downloadable
+binary-only asset (in progress), and the manual per-platform validation once that lands.
 
 **CI**: split into two workflows since 2026-08-17 — `.github/workflows/ci.yml` (fast:
 fmt/clippy/`cargo test`/`pytest -m "not parity"`) and `.github/workflows/parity.yml` (real-

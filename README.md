@@ -9,7 +9,32 @@
 
 See [`docs/agents/STATUS.md`](docs/agents/STATUS.md) for current phase, in-progress work, and what's next.
 
-## Getting started
+## Install
+
+One-line install (macOS/Linux) — downloads the latest release binary + model artifacts (from the
+public [`shmmsra/vocal-ai-models`](https://huggingface.co/shmmsra/vocal-ai-models) HuggingFace
+Hub repo, no token needed) into `./vocalai/`:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/shmmsra/vocal-ai/main/scripts/install.sh | bash
+```
+
+Windows (PowerShell):
+
+```powershell
+irm https://raw.githubusercontent.com/shmmsra/vocal-ai/main/scripts/install.ps1 | iex
+```
+
+Then run it:
+
+```bash
+./vocalai/vocalai --text "hello world" --out out.wav --models-dir ./vocalai/models
+```
+
+Run `./vocalai/vocalai --help` for the full flag list (voice cloning, sampling knobs,
+execution-provider selection), or see [`docs/dev-setup.md`](docs/dev-setup.md) §9.3.
+
+## Contributor setup
 
 Full setup — Rust toolchain, `ort`/onnxruntime, Python `export/` environment, VS Code extensions,
 git hooks — is documented in **[`docs/dev-setup.md`](docs/dev-setup.md)**. Read that first on a

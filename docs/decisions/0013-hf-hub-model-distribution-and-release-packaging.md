@@ -176,3 +176,42 @@ record, but worth remembering if bisecting a bad release).
 - VAI-015 tracks the deferred CUDA/cuDNN-bundled GPU artifacts.
 - Revisit ADR-0007's `parity.yml` T3 exclusion as a candidate follow-up now that
   public `ubuntu-latest` has 16 GB RAM -- not required, but newly viable.
+
+## Addendum (2026-08-21): bundle-at-build doesn't fit GitHub's 2GiB/asset cap
+
+**What happened**: the first real tag-triggered `release.yml` run built successfully
+but failed at the "Upload release asset" step on all 3 platforms:
+`Validation Failed: size must be less than 2147483648` (2 GiB) --
+`softprops/action-gh-release`'s hard platform limit on GitHub Release assets.
+The model set is ~4 GB (a single file, `t3_decoder.onnx`, is already ~1.9 GiB
+on its own); no realistic compression gets the full bundle under 2 GiB.
+Neither this session nor the original plan (§2.3) accounted for this limit
+when deciding to bundle-at-build.
+
+**Correction**: `release.yml` no longer archives `models/` into the uploaded
+release asset. The asset is now binary + `THIRD_PARTY_LICENSES` + `LICENSE`
+only (tens of MB). It still downloads the pinned HF Hub revision inside the
+job to structurally validate it (same smoke test as before) -- just doesn't
+package it into what gets uploaded. End users instead run
+`scripts/install.sh`/`install.ps1` (documented in `README.md`'s new "Install"
+section): a single piped command that downloads the release binary from
+GitHub *and* every model file from the public HF repo (anonymously, no
+token -- same reasoning as the release workflow's own downloads) into
+`./vocalai/`, ready to run. No new Rust code; the CLI itself is unchanged.
+
+This is the "download-on-first-run" alternative originally rejected earlier
+in this ADR -- but rejected there specifically as *CLI-internal* runtime
+code changing the offline-first design goal. What's implemented here is
+narrower: a one-time, external installer script fetches everything once,
+after which `vocalai` runs fully offline exactly as before with `--models-dir`
+pointing at the already-downloaded directory. The "no bundled-Python,
+no first-run multi-GB download inside the tool itself" goal (plan §1) is
+preserved; the "one self-contained downloadable archive" idea specifically
+is what a hard external constraint ruled out.
+
+**Alternative considered and not taken**: publish the full per-platform
+bundle (binary + models) as a file in a HF Hub repo instead of a GitHub
+Release asset (HF Hub has no comparable per-file cap). Rejected for now --
+more moving parts, and splits "the official binary" away from GitHub's
+Releases UI users expect; revisit if the installer-script approach proves
+too fragile in practice.

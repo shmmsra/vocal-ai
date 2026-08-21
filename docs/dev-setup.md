@@ -344,10 +344,15 @@ Push a `v*` tag (e.g. `git tag v0.1.0 && git push origin v0.1.0` — pushing rem
 call, not an agent's) to trigger `.github/workflows/release.yml`. It builds `vocalai-cli`
 for macOS (CoreML), Windows (CPU), and Linux (CPU) — see ADR-0013 for why Windows/Linux
 CUDA-bundled artifacts are deferred (`VAI-015`) — downloads the current `shmmsra/vocal-ai-models`
-revision from HF Hub, stages each platform's bundle (binary + `models/` + `THIRD_PARTY_LICENSES`
-+ `LICENSE`), structurally smoke-tests it, and uploads it as a release asset. `workflow_dispatch`
-(optionally with a specific `hf_revision`) builds and uploads a workflow artifact without cutting
-a release, for inspection.
+revision from HF Hub to structurally validate it, stages each platform's bundle (**binary +
+`THIRD_PARTY_LICENSES` + `LICENSE` only, not `models/`** — see ADR-0013's 2026-08-21 addendum:
+GitHub caps release assets at 2GiB/file and the ~4GB model set doesn't fit), smoke-tests it, and
+uploads it as a release asset. `workflow_dispatch` (optionally with a specific `hf_revision`)
+builds and uploads a workflow artifact without cutting a release, for inspection.
+
+End users get the binary *and* models together via `scripts/install.sh`/`install.ps1`
+(`README.md`'s "Install" section) — a one-line installer that downloads the release binary from
+GitHub and every model file from the public HF repo (anonymously, no token) into `./vocalai/`.
 
 Neither workflow runs any real inference or audio synthesis — see `docs/manual-testing.md` for
 the manual, per-platform validation steps to run against a real release build before announcing

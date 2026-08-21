@@ -4,11 +4,16 @@
 # bundling is deferred to VAI-015, see
 # docs/decisions/0013-hf-hub-model-distribution-and-release-packaging.md). Downloads the
 # already-published model artifacts from the public HuggingFace Hub repo
-# (models-export.yml publishes them separately, on its own manual trigger) -- this
-# workflow never re-exports or re-verifies models itself, and never runs any ONNX
-# inference: the smoke test here is structural file validation only
-# (onnx.checker.check_model, no session, no inference). Real end-to-end audio validation
-# is a manual step -- see docs/manual-testing.md.
+# (models-export.yml publishes them separately, on its own manual trigger) to
+# structurally validate them (no ONNX inference, no session -- file validation only,
+# see scripts/smoke_test_artifact.py) -- but does NOT bundle them into the release
+# asset: GitHub Releases caps assets at 2GiB/file, and the model set (~4GB) doesn't fit.
+# The release asset is binary-only; end users fetch models separately via
+# scripts/install.sh|install.ps1 (see README.md), which downloads them straight from the
+# public HF repo -- no HF token needed, it's a public, anonymously-readable repo. See
+# ADR-0013's addendum for the full story of why this changed from the original
+# bundle-everything design. Real end-to-end audio validation is a manual step -- see
+# docs/manual-testing.md.
 #
 # Triggers: a `v*` tag (also cuts a real GitHub Release) or workflow_dispatch (build +
 # upload a workflow artifact for inspection, without publishing a release).
@@ -82,7 +87,10 @@ jobs:
           echo "sha=$SHA" >> "$GITHUB_OUTPUT"
           echo "Bundling ${{ env.HF_REPO_ID }}@$SHA (revision: $REVISION)" >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Download model artifacts from HuggingFace Hub
+      - name: Download model artifacts from HuggingFace Hub (validation only, not bundled)
+        # Downloaded to a location outside dist/<artifact_name>/ on purpose -- these are
+        # never archived into the release asset (see the file header comment). Only used
+        # below to structurally validate that this release's pinned HF revision is sound.
         shell: bash
         run: |
           python -c "
@@ -90,11 +98,11 @@ jobs:
           snapshot_download(
               repo_id='${{ env.HF_REPO_ID }}',
               revision='${{ steps.hf.outputs.sha }}',
-              local_dir='dist/${{ matrix.artifact_name }}/models',
+              local_dir='dist/models-validate',
           )
           "
 
-      - name: Stage bundle
+      - name: Stage bundle (binary + licenses only -- see file header comment)
         shell: bash
         run: |
           mkdir -p dist/${{ matrix.artifact_name }}
@@ -106,7 +114,7 @@ jobs:
         shell: bash
         run: |
           python scripts/smoke_test_artifact.py \
-            --models-dir dist/${{ matrix.artifact_name }}/models \
+            --models-dir dist/models-validate \
             --binary dist/${{ matrix.artifact_name }}/${{ matrix.binary_name }} \
             --extra-file dist/${{ matrix.artifact_name }}/THIRD_PARTY_LICENSES \
             --extra-file dist/${{ matrix.artifact_name }}/LICENSE

@@ -6,6 +6,36 @@
 
 ---
 
+## 2026-08-21 — VAI-007 correction: GitHub's 2GiB/asset cap rules out bundling models into releases
+
+**What changed**: `release.yml` no longer archives `models/` into the uploaded release asset —
+the asset is now binary + `THIRD_PARTY_LICENSES` + `LICENSE` only (tens of MB). The workflow still
+downloads the pinned HF Hub revision inside the job to structurally validate it, just doesn't
+package it into what gets uploaded. Added `scripts/install.sh`/`install.ps1`: a one-line installer
+(`curl -fsSL .../install.sh | bash` / `irm .../install.ps1 | iex`) that downloads the release
+binary from GitHub *and* every model file from the public HF repo (anonymously, no token needed)
+into `./vocalai/`, ready to run. Added a "Install" section to `README.md` with these commands,
+and renamed the existing contributor-facing section to "Contributor setup" to disambiguate.
+
+**Why**: the first real tag-triggered `release.yml` run built successfully but failed uploading
+the release asset on all 3 platforms: GitHub Releases caps assets at 2GiB/file, and the model set
+is ~4GB (a single file, `t3_decoder.onnx`, is already ~1.9GiB on its own) — no realistic
+compression gets the full bundle under 2GiB. Neither this session nor the original Phase 1 plan
+accounted for this hard platform limit when deciding to bundle everything into one artifact.
+
+**What was rejected**: publishing the full bundle to a HF Hub repo instead of a GitHub Release
+asset (HF Hub has no comparable cap) — more moving parts, splits "the official binary" away from
+GitHub's Releases UI; revisit if the installer-script approach proves fragile in practice. Also
+rejected: adding a download-on-first-run path inside `vocalai-core`/`vocalai-cli` itself — the
+installer script is a one-time *external* step; the CLI stays unchanged and runs fully offline
+once installed, preserving the original "no bundled Python, no in-tool multi-GB download" goal.
+
+**What's next**: re-tag and re-run `release.yml` with this fix; verify `scripts/install.sh`
+actually works end-to-end once a real binary-only release exists to download from. Full story in
+`docs/decisions/0013-*.md`'s 2026-08-21 addendum.
+
+---
+
 ## 2026-08-21 — VAI-007 fix: release.yml's GITHUB_TOKEN lacked permission to create a release
 
 **What changed**: added an explicit `permissions: contents: write` block to

@@ -752,13 +752,14 @@ gh run watch   # wait for it to finish
 git tag v0.0.0-test && git push origin v0.0.0-test   # or: gh workflow run release.yml
 gh run watch
 
-# 3. Download and unpack one platform's asset, e.g. macOS:
-gh release download v0.0.0-test -p 'vocalai-macos*'
-tar -xzf vocalai-macos.tar.gz -C vocalai-macos
+# 3. Install exactly the way an end user would (release binary from GitHub, models from the
+#    public HF repo -- see ADR-0013's 2026-08-21 addendum for why these are no longer bundled
+#    into one release asset: GitHub caps release assets at 2GiB, the ~4GB model set doesn't fit):
+bash scripts/install.sh   # or: irm .../install.ps1 | iex on Windows
 
 # 4. Real end-to-end synthesis (the thing CI deliberately does NOT do):
-./vocalai-macos/vocalai --text "hello world" --out out.wav --models-dir vocalai-macos/models
-./vocalai-macos/vocalai --text "hello world" --out out-cpu.wav --models-dir vocalai-macos/models --use-cpu
+./vocalai/vocalai --text "hello world" --out out.wav --models-dir ./vocalai/models
+./vocalai/vocalai --text "hello world" --out out-cpu.wav --models-dir ./vocalai/models --use-cpu
 ```
 
 **Setup**: `HF_TOKEN` repo secret already configured (`docs/dev-setup.md` §10.1); `gh` CLI
@@ -777,8 +778,8 @@ authenticated.
   during step 4 on macOS and compare swap growth against the ~5GB→~30GB PyTorch/MPS baseline
   noted in `docs/phase1-onnx-rust-cli-plan.md` §1.
 
-**Pass criteria**: both workflows exit 0; the downloaded bundle contains a working binary +
-complete `models/` + `THIRD_PARTY_LICENSES` + `LICENSE`; both WAVs are audible and sound the
+**Pass criteria**: both workflows exit 0; `scripts/install.sh` produces a working
+`./vocalai/vocalai` binary + complete `./vocalai/models/`; both WAVs are audible and sound the
 same; clean up the test tag afterward (`git push origin :v0.0.0-test`, `gh release delete
 v0.0.0-test`).
 
@@ -786,6 +787,9 @@ v0.0.0-test`).
 - `models-export.yml` fails at the parity step: a real regression in `export/` — do not publish.
 - `release.yml`'s smoke-test step fails: a corrupted/incomplete download or build — do not ship
   that asset.
+- `scripts/install.sh`/`install.ps1` fails to download the release binary or any model file: check
+  the HF repo/GitHub release actually have the expected files (`gh release view v0.0.0-test`,
+  `curl https://huggingface.co/api/models/shmmsra/vocal-ai-models`).
 - `out.wav`/`out-cpu.wav` silent, crashing, or audibly different: a real runtime bug, independent
   of anything CI can catch given the no-inference-in-CI constraint.
 
