@@ -66,11 +66,15 @@ ADR-0013 for the full rationale):
 - [x] A real `models-export.yml` run against the live public HF repo — verified (26 model files
   present, `THIRD_PARTY_LICENSES` byte-identical, structural smoke test passes on a fresh
   download)
-- [ ] A real `v*` tag / `release.yml` run producing a real, downloadable release asset (in
-  progress — `v0.1.0`/`v0.1.1` hit the permissions and asset-size bugs above; retry pending)
-- [ ] Manual per-platform validation (`docs/manual-testing.md`): real end-to-end audio,
-  CPU-fallback EP forcing produces equivalent output, memory/swap measured against the
-  PyTorch/MPS baseline (§8) on the same hardware
+- [x] A real `v*` tag / `release.yml` run producing a real, downloadable release asset —
+  `v0.1.0`/`v0.1.1` hit the permissions and asset-size bugs above; `v0.1.2` succeeded on all 3
+  platforms
+- [x] macOS: real end-to-end install + synthesis verified — `scripts/install.sh` run from a
+  fresh directory against the live `v0.1.2` release + HF repo, then
+  `vocalai --text "hello world" --out out.wav` produced a genuine 0.88s mono 24kHz WAV
+- [ ] Windows/Linux: same end-to-end install + synthesis check, not yet run
+- [ ] CPU-fallback EP forcing produces equivalent output (`--use-cpu`), memory/swap measured
+  against the PyTorch/MPS baseline (§8) on the same hardware
 - [ ] Docs updated (CHANGELOG, STATUS, manual-testing) — done for the workflow/tooling landing;
   revisit once the above manual steps complete
 

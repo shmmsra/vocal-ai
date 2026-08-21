@@ -6,6 +6,37 @@
 
 ---
 
+## 2026-08-21 — VAI-007: install script hardening (retries + progress visibility) + real e2e verification
+
+**What changed**: `scripts/install.sh`/`install.ps1` now retry transient download failures
+(`curl --retry 3 --retry-delay 2 --connect-timeout 10` / a PowerShell retry loop around
+`Invoke-WebRequest`) instead of failing on the first blip, and print visible progress: a
+`--progress-bar` per file in bash (previously fully silent, `-s`) plus an `[i/N] filename`
+counter in both scripts, so a slow download (HF Hub's anonymous tier can be rate-limited) is
+visibly progressing rather than looking hung.
+
+**Why**: the repo owner hit a `curl: (56) ... 504` on the release-binary download; re-testing the
+same URL from this session succeeded immediately, pointing to a transient network/proxy blip
+rather than a real server-side issue -- but the script had no retry, so any transient failure
+killed the whole install. Separately, the repo owner reported the install "seems very slow" with
+no visibility into whether it was progressing or stuck, since every curl call used `-s` (silent).
+
+**What was rejected**: nothing structural -- straightforward hardening, no design change.
+
+**Verified for real this session**: ran `scripts/install.sh` end-to-end from a completely fresh
+directory against the live `v0.1.2` GitHub release + the public `shmmsra/vocal-ai-models` HF
+repo -- downloaded the binary, all 26 model files (`~4.2GB` total, confirmed via `du -sh`),
+correctly laid out as `./vocalai/vocalai` + `./vocalai/models/`, then ran
+`./vocalai/vocalai --text "hello world" --out out.wav --models-dir ./vocalai/models` for real,
+producing a genuine mono 24kHz WAV, 0.88s duration -- matching `docs/dev-setup.md` §9.3's
+expected output for that phrase exactly. Full install-to-audio pipeline confirmed working.
+
+**What's next**: none outstanding for the installer itself; VAI-007's remaining open item is the
+manual per-platform validation checklist in `docs/manual-testing.md` (CPU-fallback equivalence,
+memory/swap benchmark) on Windows/Linux, not yet run.
+
+---
+
 ## 2026-08-21 — VAI-007 correction: GitHub's 2GiB/asset cap rules out bundling models into releases
 
 **What changed**: `release.yml` no longer archives `models/` into the uploaded release asset —

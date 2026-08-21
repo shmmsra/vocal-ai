@@ -181,8 +181,16 @@ create a release (403); and one real *design* correction: GitHub Releases caps a
 compression — `release.yml` now ships binary-only, with the install scripts fetching models
 separately from HF (see ADR-0013's 2026-08-21 addendum). Model publishing is now verified working
 end-to-end (26 files, byte-identical license notice, structural smoke test passes on a fresh
-download). Not yet done: a real, fully-succeeding tagged `release.yml` run producing a downloadable
-binary-only asset (in progress), and the manual per-platform validation once that lands.
+download). `v0.1.2`'s `release.yml` run succeeded on all 3 platforms producing real, downloadable
+binary-only assets. Also added retry logic (`curl --retry`/a PowerShell retry loop) and visible
+per-file progress (`--progress-bar` + an `[i/N]` counter) to `scripts/install.sh`/`install.ps1`
+after the repo owner hit a transient `504` and reported the install felt hung with no visibility
+(HF Hub's anonymous tier can be slow). **Verified for real**: a fresh-directory
+`scripts/install.sh` run against the live `v0.1.2` release + HF repo, then
+`vocalai --text "hello world" --out out.wav` produced a genuine 0.88s mono 24kHz WAV — full
+install-to-audio pipeline confirmed working on macOS. Not yet done: the same check on
+Windows/Linux, and the CPU-fallback-equivalence/memory-swap-benchmark half of the manual
+validation checklist (`docs/manual-testing.md`).
 
 **CI**: split into two workflows since 2026-08-17 — `.github/workflows/ci.yml` (fast:
 fmt/clippy/`cargo test`/`pytest -m "not parity"`) and `.github/workflows/parity.yml` (real-
@@ -202,13 +210,11 @@ test-py-parity`/`make check`) and must be run manually before committing changes
 
 The next logical work, in priority order. Update at the end of every session.
 
-1. VAI-007 — finish per-platform packaging: the workflows/scripts landed this session
-   (`models-export.yml`, `release.yml`, `THIRD_PARTY_LICENSES`, smoke-test tooling — see the
-   "In progress" note above and ADR-0013), but nothing has actually *run* yet. Remaining:
-   repo owner flips GitHub visibility to public + adds the `HF_TOKEN` secret (both human-only),
-   then trigger `models-export.yml` for a real publish and cut a first real `v*` tag, then run
-   the manual per-platform validation in `docs/manual-testing.md` (real audio, CPU-fallback
-   equivalence, memory/swap benchmark) before calling Milestone 7 done.
+1. VAI-007 — finish per-platform packaging: the pipeline is live and verified end-to-end on
+   macOS (`v0.1.2` release + `scripts/install.sh` + real synthesis, see the "In progress" note
+   above and ADR-0013). Remaining: the same install+synthesis check on Windows/Linux, plus the
+   CPU-fallback-equivalence and memory/swap-benchmark halves of the manual validation checklist
+   in `docs/manual-testing.md`, before calling Milestone 7 done.
 2. VAI-015 — Windows/Linux CUDA/cuDNN-bundled GPU release artifacts (split out of VAI-007,
    ADR-0013): needs real GPU hardware to smoke-test and an NVIDIA redistribution-license check
    that hasn't been done yet (only the model weights were checked, in ADR-0008).
