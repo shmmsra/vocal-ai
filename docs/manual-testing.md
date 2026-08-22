@@ -799,6 +799,20 @@ v0.0.0-test`).
 - `out.wav`/`out-cpu.wav` silent, crashing, or audibly different: a real runtime bug, independent
   of anything CI can catch given the no-inference-in-CI constraint.
 
+**Verified on Windows (2026-08-22)**: ran `scripts/install.ps1` fresh (no version bump needed —
+tested against the already-live `v0.1.3` release + HF repo) into a scratch directory. Binary
+reported `vocalai 0.1.3`; both `vocalai.exe --text "hello world" --out out.wav --models-dir models`
+and the same with `--use-cpu` printed `Using CPU execution provider` (Windows ships CPU-only, no
+`--use-gpu` artifact to compare against) and exited 0. `out.wav`: mono 24kHz 16-bit PCM, 1.12s,
+peak 22835/32767, RMS ~4495. `out-cpu.wav`: same format, 0.84s, peak 17459/32767, RMS ~3961. Both
+clearly non-silent; the duration difference is expected run-to-run sampling variance in T3's
+autoregressive decode loop (see VAI-011's 2026-08-20 correction note), not a regression. Did not
+re-run the anonymous-HF-Hub download a second time to isolate its mechanics — that logic is
+identical shell-vs-PowerShell to what already passed on macOS. The download itself was slow
+(~300KB/s on the ~2GB `t3_decoder.onnx`, several minutes total); alternatives discussed but not
+decided (see `docs/CHANGELOG.md`'s 2026-08-22 VAI-007 entry). Linux install+synthesis and the
+memory/swap-benchmark step remain unverified.
+
 ---
 
 *Add new sections below this line as features land. Group by feature area (e.g. CLI, export pipeline, EP selection, voice cloning).*

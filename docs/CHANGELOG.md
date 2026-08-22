@@ -6,6 +6,69 @@
 
 ---
 
+## 2026-08-22 — VAI-007: closed by repo owner decision
+
+**What changed**: no code — `docs/issues.md`/`docs/agents/STATUS.md` updated to close VAI-007
+(`DONE`), moved from Open Issues/phase-in-progress to Recently closed.
+
+**Why**: macOS and Windows install+synthesis are both verified for real (see the entry directly
+below). The repo owner decided to close the ticket now rather than hold it open pending a Linux
+machine and a still-undefined non-macOS memory baseline, both of which are open-ended waits with
+no scheduled resolution.
+
+**What was rejected**: leaving VAI-007 `IN PROGRESS` indefinitely for two checklist items with no
+concrete plan to unblock them. If Linux install turns out to be broken, that surfaces as a new bug
+ticket against real evidence, not as a stale in-progress item nobody's actively working.
+
+**Note — explicitly not claimed**: Linux was never live-tested this session (no Linux machine
+available), and the PyTorch/MPS memory/swap-benchmark comparison from plan §8 was never attempted
+on any non-macOS platform. Closing the ticket does not mean these passed — it means the repo owner
+chose to accept that gap rather than keep the ticket open. CUDA/cuDNN-bundled GPU artifacts remain
+out of scope here, tracked separately as `VAI-015`.
+
+---
+
+## 2026-08-22 — VAI-007: Windows install + synthesis manually verified
+
+**What changed**: no code — ran `scripts/install.ps1` fresh (real download: `v0.1.3`
+`vocalai-windows-cpu` binary from the GitHub release + all 27 model files from the public HF Hub
+repo `shmmsra/vocal-ai-models`) on a real Windows machine, then ran
+`vocalai.exe --text "hello world" --out out.wav --models-dir models` and the same with
+`--use-cpu`. Checked off the Windows half of VAI-007's "Windows/Linux: same end-to-end install +
+synthesis check" box in `docs/issues.md`; Linux remains unverified (no Linux machine available
+this session).
+
+**What was observed**: `vocalai --version` printed `vocalai 0.1.3`. Both runs printed
+`Using CPU execution provider` (Windows only ships a CPU-only artifact, so this is the only path
+to exercise — `--use-cpu` and no-flag are the same code path here, unlike on macOS where CoreML is
+also available) and exited 0. `out.wav` (1.12s, peak 22835/32767, RMS ~4495) and `out-cpu.wav`
+(0.84s, peak 17459/32767, RMS ~3961) were both mono 24kHz 16-bit PCM, clearly non-silent. The
+duration difference between the two runs is expected run-to-run sampling variance in T3's
+autoregressive decode loop (token count before EOS varies run to run — already documented in
+VAI-011's 2026-08-20 correction), not a regression.
+
+**What was rejected**: re-downloading the model set a second time to prove the anonymous-HF-Hub
+download path in isolation — that mechanism (plain sequential per-file HTTP GET, no auth) is
+identical PowerShell-vs-bash logic to what already succeeded on macOS via `install.sh`, so this
+run's actually-new signal is the Windows binary + `--use-cpu` behavior, not re-proving the HF
+download mechanics.
+
+**Still open**: Linux install+synthesis check; the CPU-fallback-equivalence "measured against the
+PyTorch/MPS baseline" + memory/swap-benchmark half of VAI-007's manual checklist — the documented
+baseline is macOS-specific (`docs/phase1-onnx-rust-cli-plan.md` §1's ~5GB→~30GB PyTorch/MPS swap
+figures), so a Windows number wouldn't be comparable without a Windows-side baseline first; not
+attempted rather than silently skipped.
+
+**Separately discussed, not yet decided**: the anonymous HF Hub download was noticeably slow in
+this session (~300KB/s on the ~2GB `t3_decoder.onnx`). Discussed three alternatives with the repo
+owner — Cloudflare R2 (free tier: 10GB storage, uncapped free egress, would need a new external
+service), splitting oversized files across GitHub Releases' 2GiB/file cap (byte-level split/`cat`,
+stays on already-used infra), and parallelizing the installer scripts' existing sequential
+per-file downloads (cheapest, no new infra, works regardless of host) — no decision made yet, no
+ADR written. Revisit if this keeps coming up.
+
+---
+
 ## 2026-08-22 — VAI-013: closed as superseded by VAI-007's release matrix
 
 **What changed**: no code — `docs/issues.md`/`docs/agents/STATUS.md` updated to close VAI-013

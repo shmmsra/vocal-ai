@@ -44,49 +44,6 @@ Tickets use the prefix `VAI-NNN`, numbered sequentially (e.g. `VAI-001`, `VAI-00
 
 ## Open Issues
 
-### VAI-007 · P2 · IN PROGRESS (2026-08-21) · Milestone 7
-**Per-platform packaging: artifact matrix, bundling, smoke tests**
-
-**Acceptance criteria** (narrowed scope — CUDA-bundled GPU artifacts split out to VAI-015; see
-ADR-0013 for the full rationale):
-- [x] `.github/workflows/models-export.yml`: manual-trigger export → full `make test-py-parity`
-  gate (including T3) → structural smoke test → publish to public HF Hub repo
-  (`shmmsra/vocal-ai-models`)
-- [x] `.github/workflows/release.yml`: build artifact matrix — `vocalai-macos` (CoreML→CPU),
-  `vocalai-windows-cpu`, `vocalai-linux-cpu` — on a `v*` tag or manual dispatch
-- [x] Model weights downloaded from HF Hub inside the release job and structurally validated;
-  **not** archived into the release asset (see ADR-0013's 2026-08-21 addendum — GitHub caps
-  release assets at 2GiB/file, the ~4GB model set doesn't fit). `THIRD_PARTY_LICENSES` is still
-  bundled with the binary (fulfills ADR-0008).
-- [x] `scripts/install.sh`/`install.ps1` + `README.md` "Install" section: one-line installer that
-  fetches the release binary from GitHub and every model file from the public HF repo
-  (anonymously, no token) into `./vocalai/` — the effective replacement for "bundle everything
-  into one artifact"
-- [x] Repo owner: flipped GitHub visibility to public, added `HF_TOKEN` repo secret
-- [x] A real `models-export.yml` run against the live public HF repo — verified (26 model files
-  present, `THIRD_PARTY_LICENSES` byte-identical, structural smoke test passes on a fresh
-  download)
-- [x] A real `v*` tag / `release.yml` run producing a real, downloadable release asset —
-  `v0.1.0`/`v0.1.1` hit the permissions and asset-size bugs above; `v0.1.2` succeeded on all 3
-  platforms
-- [x] macOS: real end-to-end install + synthesis verified — `scripts/install.sh` run from a
-  fresh directory against the live `v0.1.2` release + HF repo, then
-  `vocalai --text "hello world" --out out.wav` produced a genuine 0.88s mono 24kHz WAV
-- [ ] Windows/Linux: same end-to-end install + synthesis check, not yet run
-- [ ] CPU-fallback EP forcing produces equivalent output (`--use-cpu`), memory/swap measured
-  against the PyTorch/MPS baseline (§8) on the same hardware
-- [ ] Docs updated (CHANGELOG, STATUS, manual-testing) — done for the workflow/tooling landing;
-  revisit once the above manual steps complete
-
-**Notes**: Depends on `VAI-006`. See `docs/phase1-onnx-rust-cli-plan.md` §7 Milestone 7 and §8
-Verification/Exit Criteria (full list), and `docs/decisions/0013-hf-hub-model-distribution-and-release-packaging.md`
-for the distribution-design decisions (bundle-at-build, CI-driven export/publish, structural-only
-smoke tests, corrected GitHub-hosted-runner specs). Windows/Linux CUDA/cuDNN bundling split out
-as `VAI-015`. `VAI-013` (GitHub Actions cross-platform build matrix) closed as superseded by
-`release.yml` on 2026-08-22 — see Recently closed below.
-
----
-
 ### VAI-012 · P2 · OPEN · CLI UX
 **Console progress indicator behind `--show-progress`**
 
@@ -159,6 +116,7 @@ for a genuinely different reader. Depends on `VAI-007`.
 
 | Date | Ticket | Title | Commit |
 |------|--------|-------|--------|
+| 2026-08-22 | VAI-007 | Per-platform packaging (artifact matrix, HF Hub model publish, one-line installers) closed `DONE` by repo owner decision. Real end-to-end install+synthesis verified on macOS (`v0.1.2`) and Windows (`v0.1.3`, this session — both default-EP and `--use-cpu` produced non-silent audio). **Not live-tested on Linux** — no Linux machine available, closed anyway per repo owner's call rather than left open pending hardware access. The PyTorch/MPS memory/swap-benchmark comparison (§8) was also not attempted (macOS-specific baseline, no Windows/Linux equivalent). CUDA/cuDNN GPU artifacts remain split out to `VAI-015`. | — |
 | 2026-08-22 | VAI-013 | Closed as `REJECTED`/superseded by `VAI-007`'s `.github/workflows/release.yml` (macos-latest/windows-latest/ubuntu-latest matrix, build-only verified without GPU hardware, per-OS artifacts uploaded, GPU inference explicitly out of scope) — confirmed after `VAI-007`'s workflows actually ran live (see VAI-016's closing runs `32571043242`/`32571043262`). Note: win/linux legs build CPU-only, not `--features cuda` as VAI-013's literal wording specified — CUDA artifacts are intentionally deferred to `VAI-015`, not a gap in this closure. Repo owner confirmed. | — |
 | 2026-08-22 | VAI-016 | Version-bump-driven `push`+`paths` triggers for `models-export.yml`/`release.yml` (replacing manual dispatch/tag-push as the primary flow, ADR-0014); closed after a real push to `main` (`e9f4825`) produced a genuine `v0.1.3` release (run `32571043242`) and `models-v0.1.1` HF Hub publish (run `32571043262`), both fired via `push` not `workflow_dispatch` | `d4c64ad`, `e9f4825` |
 | 2026-08-19 | VAI-011 | `--use-gpu`/`--use-cpu` execution-provider selection (CPU by default, logged); `error_on_failure()` instead of silent fallback for forced/probed hardware attempts; `Makefile` OS-based feature auto-detection (`coreml` on macOS, `cuda` elsewhere); benchmarked and fixed a 30-40% CoreML slowdown vs CPU (`CPUAndGPU`+`FastPrediction`+`RequireStaticInputShapes`); S3Gen flow estimator pinned to CPU on CoreML (see `VAI-014`) | _pending_ |

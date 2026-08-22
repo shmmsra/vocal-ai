@@ -21,7 +21,7 @@
 | 1 — Milestone 6, part B.1 (VAI-006): wire the default-voice pipeline + CLI | ✅ Complete (real end-to-end audio verified for arbitrary text, VAI-009 unblocked it) |
 | 1 — Milestone 6, part B.2 (VAI-006): `--voice` zero-shot cloning | ✅ Complete (see ADR-0011; produces non-silent audio end-to-end after a bug fix caught by manual testing, see `docs/CHANGELOG.md`; audible speaker-resemblance confirmation still pending) |
 | 1 — VAI-009: re-export HiFiGAN with a dynamic-length `speech_feat` input | ✅ Complete |
-| 1 — Milestone 7 (VAI-007): per-platform packaging — macOS/CoreML + Windows/Linux CPU (see `docs/phase1-onnx-rust-cli-plan.md` §7, ADR-0013) | 🔄 In progress |
+| 1 — Milestone 7 (VAI-007): per-platform packaging — macOS/CoreML + Windows/Linux CPU (see `docs/phase1-onnx-rust-cli-plan.md` §7, ADR-0013) | ✅ Complete (closed 2026-08-22; Linux not live-tested, see notes below) |
 | 1 — VAI-015: Windows/Linux CUDA/cuDNN-bundled GPU artifacts (split out of VAI-007) | 📋 Planned |
 
 *Update this table as phases progress. Use ✅ Complete / 🔄 In progress / 📋 Planned / 🚫 Blocked.*
@@ -149,7 +149,7 @@ demonstrated speed win. CPU stays the default on this evidence; `--use-gpu` stay
 real improvement over the naive config, and not worth removing) but should not be recommended for
 speed. See `docs/decisions/0012-*.md` and `docs/CHANGELOG.md`'s 2026-08-20 entry for the full story.
 
-**In progress (VAI-007, ADR-0013, started 2026-08-21)**: per-platform packaging. Two new
+**Resolved (VAI-007, ADR-0013, closed 2026-08-22)**: per-platform packaging. Two new
 manual-trigger-only GitHub Actions workflows: `models-export.yml` (`ubuntu-latest` — exports
 every `.onnx`/`.npy` via `make export`, gates on the **full** `make test-py-parity` including T3,
 structurally validates the result with no inference (`scripts/smoke_test_artifact.py`), then
@@ -188,9 +188,23 @@ after the repo owner hit a transient `504` and reported the install felt hung wi
 (HF Hub's anonymous tier can be slow). **Verified for real**: a fresh-directory
 `scripts/install.sh` run against the live `v0.1.2` release + HF repo, then
 `vocalai --text "hello world" --out out.wav` produced a genuine 0.88s mono 24kHz WAV — full
-install-to-audio pipeline confirmed working on macOS. Not yet done: the same check on
-Windows/Linux, and the CPU-fallback-equivalence/memory-swap-benchmark half of the manual
-validation checklist (`docs/manual-testing.md`).
+install-to-audio pipeline confirmed working on macOS. **Windows verified 2026-08-22**: a fresh
+`scripts/install.ps1` run against the live `v0.1.3` release + HF repo, then `vocalai.exe --text
+"hello world" --out out.wav --models-dir models` (default) and again with `--use-cpu` both
+produced non-silent mono 24kHz WAVs (1.12s/0.84s — the duration delta is expected T3 decode-loop
+sampling variance, not a bug); Windows only ships a CPU-only artifact, so this also covers the
+`--use-cpu`-equivalence check for this platform. Not yet done: the same check on Linux (no
+machine available this session), and the memory/swap-benchmark half of the manual validation
+checklist (`docs/manual-testing.md`) — the documented baseline is macOS-specific, so a Windows
+number isn't directly comparable without its own baseline first. Separately, the anonymous HF Hub
+download was noticeably slow on Windows (~300KB/s on the ~2GB `t3_decoder.onnx`); discussed
+Cloudflare R2 / GitHub-Releases file-splitting / installer-script parallelization as possible
+fixes with the repo owner, no decision made — see `docs/CHANGELOG.md`'s 2026-08-22 VAI-007 entry.
+**Closed 2026-08-22 by repo owner decision**: Linux was never live-tested (no Linux machine
+available this session) and the PyTorch/MPS memory/swap-benchmark comparison was never attempted
+(macOS-specific baseline, no Windows/Linux equivalent gathered) — the repo owner chose to close
+the ticket anyway rather than leave it open pending hardware access. If Linux install turns out
+to be broken, it'll surface as a new bug report, not as unfinished VAI-007 work.
 
 **Resolved (VAI-016, ADR-0014, closed 2026-08-22)**: version-bump-driven triggers for
 `models-export.yml`/`release.yml`, replacing manual `workflow_dispatch`/tag-push as the primary
@@ -230,20 +244,23 @@ test-py-parity`/`make check`) and must be run manually before committing changes
 
 The next logical work, in priority order. Update at the end of every session.
 
-1. VAI-007 — finish per-platform packaging: the pipeline is live and verified end-to-end on
-   macOS (`v0.1.2` release + `scripts/install.sh` + real synthesis, see the "In progress" note
-   above and ADR-0013). Remaining: the same install+synthesis check on Windows/Linux, plus the
-   CPU-fallback-equivalence and memory/swap-benchmark halves of the manual validation checklist
-   in `docs/manual-testing.md`, before calling Milestone 7 done.
-2. VAI-015 — Windows/Linux CUDA/cuDNN-bundled GPU release artifacts (split out of VAI-007,
+1. VAI-015 — Windows/Linux CUDA/cuDNN-bundled GPU release artifacts (split out of VAI-007,
    ADR-0013): needs real GPU hardware to smoke-test and an NVIDIA redistribution-license check
    that hasn't been done yet (only the model weights were checked, in ADR-0008).
-3. VAI-014 — bucket `s3gen_estimator.onnx`'s time dimension so CoreML covers the full pipeline
+2. VAI-014 — bucket `s3gen_estimator.onnx`'s time dimension so CoreML covers the full pipeline
    with no CPU carve-out (see the VAI-011 residual-risk note above for the diagnosis).
-4. VAI-012 — `--show-progress` console progress indicator (split out of VAI-011).
-5. Candidate, not yet scoped: revisit ADR-0007's `parity.yml` T3 exclusion now that public
+3. VAI-012 — `--show-progress` console progress indicator (split out of VAI-011).
+4. Candidate, not yet scoped: revisit ADR-0007's `parity.yml` T3 exclusion now that public
    `ubuntu-latest` has 16GB RAM (see ADR-0013) — newly viable, not required.
+5. Candidate, not yet scoped: the anonymous HF Hub model download is noticeably slow
+   (~300KB/s observed on Windows for `t3_decoder.onnx`) — Cloudflare R2, GitHub-Releases
+   file-splitting, and installer-script parallelization were discussed as fixes on 2026-08-22,
+   nothing decided (see `docs/CHANGELOG.md`).
 6. See `docs/issues.md` for the full tracked-ticket list.
+
+**Closed 2026-08-22, not on this list**: VAI-007 (per-platform packaging) — closed by repo owner
+decision with Linux never live-tested and the memory/swap benchmark never gathered; see the
+"Resolved" note above and `docs/issues.md`'s Recently closed table.
 
 ---
 
@@ -251,6 +268,7 @@ The next logical work, in priority order. Update at the end of every session.
 
 | Date | Ticket | Summary | Commit |
 |------|--------|---------|--------|
+| 2026-08-22 | VAI-007 | Per-platform packaging closed by repo owner decision — macOS + Windows install/synthesis verified for real, **Linux never live-tested** (no machine available) and memory/swap benchmark never gathered (no non-macOS baseline); CUDA/cuDNN artifacts remain `VAI-015` | — |
 | 2026-08-22 | VAI-013 | Closed as superseded by VAI-007's `release.yml` cross-platform build matrix (macos/windows/ubuntu, build-only without GPU hardware, per-OS artifacts) — confirmed once VAI-007's workflows actually ran live; CUDA artifacts remain deferred to VAI-015 | — |
 | 2026-08-22 | VAI-016 | Version-bump-driven `push`+`paths` triggers for `models-export.yml`/`release.yml` (ADR-0014); closed after a real push to `main` produced a genuine `v0.1.3` release + `models-v0.1.1` HF Hub publish, both fired via `push` not `workflow_dispatch` | `d4c64ad`, `e9f4825` |
 | 2026-08-20 | — | Correction: walked back VAI-011's "CoreML tuning reaches CPU parity" claim after the repo owner's real-world re-test found no improvement — docs-only, no code change | _pending_ |
