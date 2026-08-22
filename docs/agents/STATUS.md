@@ -192,7 +192,7 @@ install-to-audio pipeline confirmed working on macOS. Not yet done: the same che
 Windows/Linux, and the CPU-fallback-equivalence/memory-swap-benchmark half of the manual
 validation checklist (`docs/manual-testing.md`).
 
-**In progress (VAI-016, ADR-0014, 2026-08-22)**: version-bump-driven triggers for
+**Resolved (VAI-016, ADR-0014, closed 2026-08-22)**: version-bump-driven triggers for
 `models-export.yml`/`release.yml`, replacing manual `workflow_dispatch`/tag-push as the primary
 flow. `Cargo.toml` gains a single `[workspace.package] version` (`vocalai-cli`/`vocalai-core` now
 inherit it via `version.workspace = true`); a new root `MODELS_VERSION` file tracks the model
@@ -203,10 +203,14 @@ because a workflow-authored tag push doesn't fire other workflows' tag-push trig
 (`GITHUB_TOKEN` anti-recursion safeguard), and the repo owner explicitly ruled out the standard
 workarounds (PAT secret, GitHub App token, `gh workflow run` dispatch) as unwanted management
 overhead. `release.yml` also gained `generate_release_notes: true`. Manual fallbacks
-(`workflow_dispatch`, direct `git tag && git push`) are unchanged. **Not yet closed**: this has
-only been verified locally (`cargo metadata`, YAML parse, `make check` — 77 Rust + 12 export + 16
-script tests, including 2 new ones) — no real push to `main` has exercised the new triggers yet.
-See `docs/decisions/0014-version-bump-driven-release-triggers.md` and `docs/issues.md`'s VAI-016.
+(`workflow_dispatch`, direct `git tag && git push`) are unchanged. **Verified live**: `d4c64ad`
+(the implementation, no version bump) pushed first and both guards correctly no-op'd; `e9f4825`
+then bumped `Cargo.toml` to `0.1.3` and `MODELS_VERSION` to `0.1.1` in one commit, and the new
+`push`+`paths` triggers fired for real — `release.yml` produced a genuine `v0.1.3` tag/release
+(3-platform matrix, run `32571043242`) and `models-export.yml` produced a genuine `models-v0.1.1`
+tag + HF Hub publish (full parity gate including T3, run `32571043262`) — both via `push`, not
+`workflow_dispatch`, confirming the anti-recursion workaround works as designed. See
+`docs/decisions/0014-version-bump-driven-release-triggers.md` and `docs/issues.md`'s VAI-016.
 
 **CI**: split into two workflows since 2026-08-17 — `.github/workflows/ci.yml` (fast:
 fmt/clippy/`cargo test`/`pytest -m "not parity"`) and `.github/workflows/parity.yml` (real-
@@ -226,28 +230,20 @@ test-py-parity`/`make check`) and must be run manually before committing changes
 
 The next logical work, in priority order. Update at the end of every session.
 
-1. VAI-016 — implemented this session (see ADR-0014, `docs/issues.md`), not yet closed: needs a
-   real push to `main` touching `MODELS_VERSION`/`Cargo.toml` to confirm the new triggers/guards
-   behave as designed in live GitHub Actions (not committed/pushed yet as of this writing — see
-   the manual test plan posted to the repo owner). Landing `MODELS_VERSION` for the first time is
-   expected to kick off one real baseline `models-export.yml` run (harmless, see ADR-0014's
-   addendum).
-2. VAI-007 — finish per-platform packaging: the pipeline is live and verified end-to-end on
+1. VAI-007 — finish per-platform packaging: the pipeline is live and verified end-to-end on
    macOS (`v0.1.2` release + `scripts/install.sh` + real synthesis, see the "In progress" note
    above and ADR-0013). Remaining: the same install+synthesis check on Windows/Linux, plus the
    CPU-fallback-equivalence and memory/swap-benchmark halves of the manual validation checklist
    in `docs/manual-testing.md`, before calling Milestone 7 done.
-3. VAI-015 — Windows/Linux CUDA/cuDNN-bundled GPU release artifacts (split out of VAI-007,
+2. VAI-015 — Windows/Linux CUDA/cuDNN-bundled GPU release artifacts (split out of VAI-007,
    ADR-0013): needs real GPU hardware to smoke-test and an NVIDIA redistribution-license check
    that hasn't been done yet (only the model weights were checked, in ADR-0008).
-4. VAI-014 — bucket `s3gen_estimator.onnx`'s time dimension so CoreML covers the full pipeline
+3. VAI-014 — bucket `s3gen_estimator.onnx`'s time dimension so CoreML covers the full pipeline
    with no CPU carve-out (see the VAI-011 residual-risk note above for the diagnosis).
-5. VAI-012 — `--show-progress` console progress indicator (split out of VAI-011).
-6. VAI-013 — likely superseded by VAI-007's `release.yml` build matrix; confirm and close once
-   VAI-007 lands (not closed unilaterally — see `docs/issues.md`).
-7. Candidate, not yet scoped: revisit ADR-0007's `parity.yml` T3 exclusion now that public
+4. VAI-012 — `--show-progress` console progress indicator (split out of VAI-011).
+5. Candidate, not yet scoped: revisit ADR-0007's `parity.yml` T3 exclusion now that public
    `ubuntu-latest` has 16GB RAM (see ADR-0013) — newly viable, not required.
-8. See `docs/issues.md` for the full tracked-ticket list.
+6. See `docs/issues.md` for the full tracked-ticket list.
 
 ---
 
@@ -255,6 +251,8 @@ The next logical work, in priority order. Update at the end of every session.
 
 | Date | Ticket | Summary | Commit |
 |------|--------|---------|--------|
+| 2026-08-22 | VAI-013 | Closed as superseded by VAI-007's `release.yml` cross-platform build matrix (macos/windows/ubuntu, build-only without GPU hardware, per-OS artifacts) — confirmed once VAI-007's workflows actually ran live; CUDA artifacts remain deferred to VAI-015 | — |
+| 2026-08-22 | VAI-016 | Version-bump-driven `push`+`paths` triggers for `models-export.yml`/`release.yml` (ADR-0014); closed after a real push to `main` produced a genuine `v0.1.3` release + `models-v0.1.1` HF Hub publish, both fired via `push` not `workflow_dispatch` | `d4c64ad`, `e9f4825` |
 | 2026-08-20 | — | Correction: walked back VAI-011's "CoreML tuning reaches CPU parity" claim after the repo owner's real-world re-test found no improvement — docs-only, no code change | _pending_ |
 | 2026-08-19 | VAI-011 | `--use-gpu`/`--use-cpu` execution-provider selection (CPU by default), `error_on_failure()` instead of silent hardware-EP fallback, `Makefile` OS-based feature auto-detection, CoreML tuned (`CPUAndGPU`+`FastPrediction`+`RequireStaticInputShapes`) to fix a measured 30-40% slowdown vs CPU, S3Gen flow estimator pinned to CPU on CoreML (real fix tracked as VAI-014) | _pending_ |
 | 2026-08-18 | — | Add `make export` (+ `scripts/export-all.{sh,ps1}`) wrapping the 8-10 `export/` scripts `docs/dev-setup.md` §11.1 documents into one command; `--with-voice-cloning` opt-in for the two extra `--voice`-only exports | _pending_ |

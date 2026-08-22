@@ -6,6 +6,29 @@
 
 ---
 
+## 2026-08-22 — VAI-013: closed as superseded by VAI-007's release matrix
+
+**What changed**: no code — `docs/issues.md`/`docs/agents/STATUS.md` updated to close VAI-013
+(`REJECTED`, superseded), moved to Recently closed.
+
+**Why**: VAI-013 asked for a GitHub Actions matrix building `vocalai-cli` on
+macos-latest/windows-latest/ubuntu-latest without requiring GPU hardware on the runner, with
+per-OS artifacts uploaded and GPU inference explicitly out of scope. `VAI-007`'s
+`.github/workflows/release.yml` already does exactly this, and — as of VAI-016's closure this
+same session — has now actually run live via a real push to `main` (runs `32571043242`/
+`32571043262`), which is the confirmation this ticket's "likely superseded, pending confirmation"
+note was waiting on.
+
+**What was rejected**: keeping VAI-013 open as a separate ticket once its acceptance criteria are
+already met by shipped, verified work — that would just be duplicate tracking.
+
+**Note**: VAI-013's literal wording asked for `windows-latest`/`ubuntu-latest` to build with
+`--features cuda`; `release.yml` builds those two CPU-only. That gap is intentional, not a hole in
+this closure — CUDA-bundled artifacts are `VAI-015`'s explicit scope, split out for the same
+GPU-hardware/licensing reasons documented there.
+
+---
+
 ## 2026-08-22 — VAI-016: version-bump-driven triggers for model-publish + release pipelines
 
 **What changed**: consolidated `Cargo.toml`'s duplicated `version = "0.1.0"` into a single
@@ -42,15 +65,21 @@ tag-existence check is simpler and equally effective). Full design in ADR-0014.
 **Verified this session**: `cargo metadata` confirms both crates resolve `version = "0.1.2"`
 from the workspace; both edited workflow YAML files parse cleanly; `make check` passes (77 Rust
 tests, 12 export parity tests, 16 script tests including 2 new ones for the `MODELS_VERSION`
-publish guard). **Not yet verified**: an actual push to `main` touching either version file —
-that's the real trigger under test, and can only be observed once this change is committed and
-pushed (see the manual test plan posted to the repo owner before commit).
+publish guard).
 
-**What's next**: once merged, watch the first real `models-export.yml` run this triggers (no
-`models-v*` tag has ever existed, so landing `MODELS_VERSION` will kick off one real export/
-publish to establish the `models-v0.1.0` baseline — expected and harmless, see ADR-0014's
-addendum). VAI-007's remaining Windows/Linux manual-validation checklist is still separately
-open.
+**Verified live (2026-08-22, closing VAI-016)**: two real pushes to `main` exercised the new
+triggers end-to-end. `d4c64ad` (this change) landed first — no version actually changed yet, so
+both guards correctly no-op'd. `e9f4825` then bumped `Cargo.toml` to `0.1.3` and
+`MODELS_VERSION` to `0.1.1` in one commit: `release.yml`'s `push`+`paths` trigger fired and
+produced a real `v0.1.3` tag + GitHub release (3-platform matrix, all green, run `32571043242`);
+`models-export.yml`'s trigger fired and produced a real `models-v0.1.1` tag plus a fresh HF Hub
+publish (full parity gate including T3, structural smoke test, tag step all green, run
+`32571043262`). Both fired via `push`, not `workflow_dispatch` — confirming the anti-recursion
+workaround (direct `paths`-filtered push trigger instead of a tag-push chain) works as designed.
+VAI-016 is closed on this evidence.
+
+**What's next**: VAI-007's remaining Windows/Linux manual-validation checklist is still
+separately open; nothing further needed for VAI-016 itself.
 
 ---
 

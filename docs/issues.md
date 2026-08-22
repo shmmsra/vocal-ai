@@ -82,8 +82,8 @@ ADR-0013 for the full rationale):
 Verification/Exit Criteria (full list), and `docs/decisions/0013-hf-hub-model-distribution-and-release-packaging.md`
 for the distribution-design decisions (bundle-at-build, CI-driven export/publish, structural-only
 smoke tests, corrected GitHub-hosted-runner specs). Windows/Linux CUDA/cuDNN bundling split out
-as `VAI-015`. `VAI-013` (GitHub Actions cross-platform build matrix) is likely superseded by
-`release.yml` — not closed here, pending confirmation.
+as `VAI-015`. `VAI-013` (GitHub Actions cross-platform build matrix) closed as superseded by
+`release.yml` on 2026-08-22 — see Recently closed below.
 
 ---
 
@@ -97,25 +97,6 @@ as `VAI-015`. `VAI-013` (GitHub Actions cross-platform build matrix) is likely s
 - [ ] Manual test steps added to `docs/manual-testing.md`
 
 **Notes**: Split out of `VAI-011` at the user's request so the execution-provider work could ship independently. See the approved plan in the VAI-011 session for the exact `ProgressEvent`/callback design (phase boundaries + per-token count, wrapped around the existing `decoder_step` closure in `pipeline.rs::synthesize` — no changes needed to `t3.rs` itself).
-
----
-
-### VAI-013 · P3 · OPEN · CI/Release
-**GitHub Actions cross-platform release-build matrix (Windows/macOS/Linux)**
-
-**Acceptance criteria**:
-- [ ] Matrix workflow building `vocalai-cli` on `macos-latest` (`--features coreml`), `windows-latest`/`ubuntu-latest` (`--features cuda`), mirroring `Makefile`'s `HW_FEATURE` auto-detection (VAI-011)
-- [ ] Confirm build-only jobs succeed without GPU hardware present on the runner (verified: `ort-sys` downloads prebuilt ONNX Runtime binaries per target-triple+feature combo, no local CUDA toolkit/GPU needed to compile)
-- [ ] Release artifacts uploaded per OS
-- [ ] Explicitly out of scope: running/verifying real GPU-path inference in CI (would need a GPU-enabled runner, self-hosted or paid)
-
-**Notes**: Raised by the user while reviewing VAI-011; deferred to its own ticket rather than bundled in.
-
-**Update (2026-08-21)**: `VAI-007`'s `.github/workflows/release.yml` already delivers this
-ticket's acceptance criteria (matrix build on macos-latest/windows-latest/ubuntu-latest,
-build-only verified without GPU hardware, artifacts uploaded per OS, GPU inference explicitly
-out of scope). Likely superseded — not closed here pending the repo owner's confirmation once
-VAI-007's workflows have actually run.
 
 ---
 
@@ -170,51 +151,6 @@ for a genuinely different reader. Depends on `VAI-007`.
 
 ---
 
-### VAI-016 · P3 · IN PROGRESS · CI/Release
-**Version-bump-driven triggers for the model-publish + release pipelines (replace manual dispatch)**
-
-**Implemented 2026-08-22, see ADR-0014 — one deliberate design deviation from the acceptance
-criteria as originally written**: a workflow-pushed tag does not fire other workflows' tag-push
-triggers (`GITHUB_TOKEN` anti-recursion safeguard), and the repo owner explicitly ruled out the
-standard workarounds (PAT secret, GitHub App token, `gh workflow run` dispatch) as unwanted
-ongoing management overhead. So instead of "auto-create/push a tag which triggers the pipeline,"
-both workflows gained a direct `paths`-filtered `push: branches: [main]` trigger — the version-
-file edit landing on `main` *is* the trigger; the tag is still created afterward, but purely as a
-record/release-anchor, no longer relied on to trigger anything. Net effect for the ticket's intent
-("bump a file, push, pipeline runs") is the same; the mechanism differs from the literal wording
-below. Not yet closed: needs a real push-to-`main` run to confirm the triggers/guards behave as
-designed in live GitHub Actions (see `docs/manual-testing.md`), and `MODELS_VERSION`'s first
-landing is expected to kick off one real baseline publish (harmless, see ADR-0014's addendum).
-
-**Acceptance criteria**:
-- [x] Promote the duplicated `version = "0.1.0"` in `vocalai-cli`/`vocalai-core`'s `Cargo.toml` to
-      a single `[workspace.package] version`, inherited via `version.workspace = true` — one
-      source of truth for the CLI/package version.
-- [x] A new root-level `MODELS_VERSION` file (plain text) as the model artifacts' version — no
-      existing home for this since `models/` is git-ignored.
-- [x] A workflow step/job that, on push to `main`, compares each version against its last
-      matching git tag (`v*` for the Cargo version, `models-v*` for `MODELS_VERSION`) and only
-      proceeds if it actually changed — avoids firing on unrelated edits to either file. (Uses an
-      exact tag-existence check rather than lexicographic "last tag" comparison — see ADR-0014.)
-- [x] On a genuine model-version bump: auto-create/push a `models-vN` tag and trigger
-      `models-export.yml` (no more manual `workflow_dispatch`); tag the published HF Hub revision
-      to match. (Triggering is via `push`+`paths` directly, not a tag-push chain — see ADR-0014.)
-- [x] On a genuine package-version bump: auto-create/push a `vX.Y.Z` tag — `release.yml` now
-      creates this tag itself via `softprops/action-gh-release`'s `tag_name` input as part of
-      publishing, rather than a separate git-tag-push step triggering its existing tag-push path;
-      the existing manual `push: tags: ["v*"]` path itself is untouched — see ADR-0014.
-- [x] Release notes standardized via GitHub's built-in `generate_release_notes: true` (already
-      supported by `softprops/action-gh-release`) instead of hand-rolled commit-range diffing.
-- [x] `docs/dev-setup.md` §10 updated to describe "bump the version file, push" instead of manual
-      `gh workflow run`/tag commands; `docs/manual-testing.md` updated to match.
-
-**Notes**: Raised by the repo owner while reviewing `VAI-007`; deliberately split out rather than
-bundled in, so `VAI-007`'s already-tested manual-trigger pipeline could ship and get a first real
-run before adding an automatic-triggering layer on top. See the `VAI-007` session (2026-08-21) for
-the design discussion this ticket summarizes.
-
----
-
 *Add new tickets below this line. Use the same format: heading with ID · priority · status · brief category; then bold one-line title; then acceptance criteria as checkboxes; then notes.*
 
 ---
@@ -223,6 +159,8 @@ the design discussion this ticket summarizes.
 
 | Date | Ticket | Title | Commit |
 |------|--------|-------|--------|
+| 2026-08-22 | VAI-013 | Closed as `REJECTED`/superseded by `VAI-007`'s `.github/workflows/release.yml` (macos-latest/windows-latest/ubuntu-latest matrix, build-only verified without GPU hardware, per-OS artifacts uploaded, GPU inference explicitly out of scope) — confirmed after `VAI-007`'s workflows actually ran live (see VAI-016's closing runs `32571043242`/`32571043262`). Note: win/linux legs build CPU-only, not `--features cuda` as VAI-013's literal wording specified — CUDA artifacts are intentionally deferred to `VAI-015`, not a gap in this closure. Repo owner confirmed. | — |
+| 2026-08-22 | VAI-016 | Version-bump-driven `push`+`paths` triggers for `models-export.yml`/`release.yml` (replacing manual dispatch/tag-push as the primary flow, ADR-0014); closed after a real push to `main` (`e9f4825`) produced a genuine `v0.1.3` release (run `32571043242`) and `models-v0.1.1` HF Hub publish (run `32571043262`), both fired via `push` not `workflow_dispatch` | `d4c64ad`, `e9f4825` |
 | 2026-08-19 | VAI-011 | `--use-gpu`/`--use-cpu` execution-provider selection (CPU by default, logged); `error_on_failure()` instead of silent fallback for forced/probed hardware attempts; `Makefile` OS-based feature auto-detection (`coreml` on macOS, `cuda` elsewhere); benchmarked and fixed a 30-40% CoreML slowdown vs CPU (`CPUAndGPU`+`FastPrediction`+`RequireStaticInputShapes`); S3Gen flow estimator pinned to CPU on CoreML (see `VAI-014`) | _pending_ |
 | 2026-08-18 | VAI-006 | Wire full pipeline in `vocalai-core` + clap CLI in `vocalai-cli`, including part B.2 `--voice` zero-shot cloning (`voice_encoder.rs`, `s3tokenizer.rs`, `campplus.rs`, `mel.rs`'s hand-rolled mel/Kaldi-fbank DSP) | _pending_ |
 | 2026-08-18 | VAI-009 | Fix two trace-baking bugs in `export_hifigan.py` (envelope `.repeat(int)`, noise-buffer size) so `speech_feat` is a genuine dynamic ONNX axis; extend `check_hifigan` to 3 frame counts — unblocks VAI-006's end-to-end acceptance criterion | `9ff4b4e` |
