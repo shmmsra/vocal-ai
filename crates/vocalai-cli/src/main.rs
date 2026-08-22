@@ -13,7 +13,10 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 use clap::Parser;
-use vocalai_core::pipeline::{synthesize, ModelBundle, SynthesisParams};
+use indicatif::{ProgressBar, ProgressStyle};
+use vocalai_core::pipeline::{
+    synthesize, ModelBundle, PipelinePhase, ProgressEvent, SynthesisParams,
+};
 use vocalai_core::session::ExecutionProviderPreference;
 
 /// Standalone Chatterbox TTS: `vocalai --text "hello world" --out out.wav`.
@@ -75,6 +78,20 @@ struct Args {
     /// Use the CPU execution provider only; never attempt a hardware EP.
     #[arg(long = "use-cpu", action = clap::ArgAction::SetTrue, conflicts_with = "use_gpu")]
     use_cpu: bool,
+
+    /// Print phase labels and a decode-loop progress bar to stderr while
+    /// synthesizing (default off, no output change without it -- VAI-012).
+    #[arg(long = "show-progress", action = clap::ArgAction::SetTrue)]
+    show_progress: bool,
+}
+
+fn phase_label(phase: PipelinePhase) -> &'static str {
+    match phase {
+        PipelinePhase::VoiceConditioning => "Preparing voice conditioning...",
+        PipelinePhase::Decoding => "Decoding speech tokens...",
+        PipelinePhase::Vocoding => "Vocoding...",
+        PipelinePhase::Watermarking => "Watermarking...",
+    }
 }
 
 fn main() -> ExitCode {
@@ -120,9 +137,45 @@ fn main() -> ExitCode {
     };
 
     let mut rng = rand::thread_rng();
-    let waveform = match synthesize(&mut bundle, &params, &mut rng) {
+
+    let mut noop = |_event: ProgressEvent| {};
+    let mut decode_bar: Option<ProgressBar> = None;
+    let mut render = |event: ProgressEvent| match event {
+        ProgressEvent::Phase(phase) => {
+            if let Some(bar) = decode_bar.take() {
+                bar.finish_and_clear();
+            }
+            if phase == PipelinePhase::Decoding {
+                let bar = ProgressBar::new(args.max_new_tokens as u64);
+                bar.set_style(
+                    ProgressStyle::with_template("{msg} [{bar:40}] {pos}/{len}")
+                        .expect("static template")
+                        .progress_chars("=> "),
+                );
+                bar.set_message(phase_label(phase));
+                decode_bar = Some(bar);
+            } else {
+                eprintln!("==> {}", phase_label(phase));
+            }
+        }
+        ProgressEvent::DecodeStep { step, max } => {
+            if let Some(bar) = &decode_bar {
+                bar.set_position(step.min(max) as u64);
+            }
+        }
+    };
+    let on_progress: &mut dyn FnMut(ProgressEvent) = if args.show_progress {
+        &mut render
+    } else {
+        &mut noop
+    };
+
+    let waveform = match synthesize(&mut bundle, &params, &mut rng, on_progress) {
         Ok(waveform) => waveform,
         Err(e) => {
+            if let Some(bar) = decode_bar.take() {
+                bar.finish_and_clear();
+            }
             eprintln!("error: {e}");
             return ExitCode::FAILURE;
         }

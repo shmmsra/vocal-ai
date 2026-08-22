@@ -44,19 +44,6 @@ Tickets use the prefix `VAI-NNN`, numbered sequentially (e.g. `VAI-001`, `VAI-00
 
 ## Open Issues
 
-### VAI-012 · P2 · OPEN · CLI UX
-**Console progress indicator behind `--show-progress`**
-
-**Acceptance criteria**:
-- [ ] `--show-progress` flag on `vocalai` (default off, no behavior/output change without it)
-- [ ] Progress reported for T3's autoregressive decode loop (dominant runtime cost, up to `--max-new-tokens` steps) via a callback threaded through `pipeline::synthesize`, plus coarse phase labels for voice conditioning / S3Gen vocoding / watermarking
-- [ ] Rendering (e.g. `indicatif`) lives in `vocalai-cli` only; `vocalai-core` stays UI-agnostic (a plain callback/event type, no UI crate dependency)
-- [ ] Manual test steps added to `docs/manual-testing.md`
-
-**Notes**: Split out of `VAI-011` at the user's request so the execution-provider work could ship independently. See the approved plan in the VAI-011 session for the exact `ProgressEvent`/callback design (phase boundaries + per-token count, wrapped around the existing `decoder_step` closure in `pipeline.rs::synthesize` — no changes needed to `t3.rs` itself).
-
----
-
 ### VAI-015 · P3 · OPEN · CI/Release
 **Windows/Linux CUDA/cuDNN-bundled GPU release artifacts**
 
@@ -116,11 +103,12 @@ for a genuinely different reader. Depends on `VAI-007`.
 
 | Date | Ticket | Title | Commit |
 |------|--------|-------|--------|
+| 2026-08-22 | VAI-012 | `--show-progress` flag: `ProgressEvent`/`PipelinePhase` threaded through `pipeline::synthesize` (wraps the existing `decoder_step` closure, no `t3.rs` changes), rendered via `indicatif` in `vocalai-cli` only. Plus, at the repo owner's request while approving the plan (not original ticket scope): `scripts/install.sh`/`install.ps1` track installed CLI/model versions (`.vocalai_version`, reused `MODELS_VERSION`) and skip re-downloading whichever half is already up to date — see ADR-0015 for the three real design bugs review/testing caught (a shared-IP `api.github.com` rate limit; a premature version-marker write on an interrupted download; and a since-corrected design that silently fell back to downloading on *any* version-check failure, including a confirmed rate limit — now fails fast with a specific error instead, on explicit repo-owner instruction). `install.ps1`'s half, and a full completed model download for `install.sh`, not yet verified live (no Windows machine; full download intentionally not run to completion this session, see `docs/manual-testing.md`). | (pending commit) |
 | 2026-08-22 | VAI-007 | Per-platform packaging (artifact matrix, HF Hub model publish, one-line installers) closed `DONE` by repo owner decision. Real end-to-end install+synthesis verified on macOS (`v0.1.2`) and Windows (`v0.1.3`, this session — both default-EP and `--use-cpu` produced non-silent audio). **Not live-tested on Linux** — no Linux machine available, closed anyway per repo owner's call rather than left open pending hardware access. The PyTorch/MPS memory/swap-benchmark comparison (§8) was also not attempted (macOS-specific baseline, no Windows/Linux equivalent). CUDA/cuDNN GPU artifacts remain split out to `VAI-015`. | — |
 | 2026-08-22 | VAI-013 | Closed as `REJECTED`/superseded by `VAI-007`'s `.github/workflows/release.yml` (macos-latest/windows-latest/ubuntu-latest matrix, build-only verified without GPU hardware, per-OS artifacts uploaded, GPU inference explicitly out of scope) — confirmed after `VAI-007`'s workflows actually ran live (see VAI-016's closing runs `32571043242`/`32571043262`). Note: win/linux legs build CPU-only, not `--features cuda` as VAI-013's literal wording specified — CUDA artifacts are intentionally deferred to `VAI-015`, not a gap in this closure. Repo owner confirmed. | — |
 | 2026-08-22 | VAI-016 | Version-bump-driven `push`+`paths` triggers for `models-export.yml`/`release.yml` (replacing manual dispatch/tag-push as the primary flow, ADR-0014); closed after a real push to `main` (`e9f4825`) produced a genuine `v0.1.3` release (run `32571043242`) and `models-v0.1.1` HF Hub publish (run `32571043262`), both fired via `push` not `workflow_dispatch` | `d4c64ad`, `e9f4825` |
-| 2026-08-19 | VAI-011 | `--use-gpu`/`--use-cpu` execution-provider selection (CPU by default, logged); `error_on_failure()` instead of silent fallback for forced/probed hardware attempts; `Makefile` OS-based feature auto-detection (`coreml` on macOS, `cuda` elsewhere); benchmarked and fixed a 30-40% CoreML slowdown vs CPU (`CPUAndGPU`+`FastPrediction`+`RequireStaticInputShapes`); S3Gen flow estimator pinned to CPU on CoreML (see `VAI-014`) | _pending_ |
-| 2026-08-18 | VAI-006 | Wire full pipeline in `vocalai-core` + clap CLI in `vocalai-cli`, including part B.2 `--voice` zero-shot cloning (`voice_encoder.rs`, `s3tokenizer.rs`, `campplus.rs`, `mel.rs`'s hand-rolled mel/Kaldi-fbank DSP) | _pending_ |
+| 2026-08-19 | VAI-011 | `--use-gpu`/`--use-cpu` execution-provider selection (CPU by default, logged); `error_on_failure()` instead of silent fallback for forced/probed hardware attempts; `Makefile` OS-based feature auto-detection (`coreml` on macOS, `cuda` elsewhere); benchmarked and fixed a 30-40% CoreML slowdown vs CPU (`CPUAndGPU`+`FastPrediction`+`RequireStaticInputShapes`); S3Gen flow estimator pinned to CPU on CoreML (see `VAI-014`) | `f1c74af` |
+| 2026-08-18 | VAI-006 | Wire full pipeline in `vocalai-core` + clap CLI in `vocalai-cli`, including part B.2 `--voice` zero-shot cloning (`voice_encoder.rs`, `s3tokenizer.rs`, `campplus.rs`, `mel.rs`'s hand-rolled mel/Kaldi-fbank DSP) | `fbcf484`, `4d97b0d` |
 | 2026-08-18 | VAI-009 | Fix two trace-baking bugs in `export_hifigan.py` (envelope `.repeat(int)`, noise-buffer size) so `speech_feat` is a genuine dynamic ONNX axis; extend `check_hifigan` to 3 frame counts — unblocks VAI-006's end-to-end acceptance criterion | `9ff4b4e` |
 | 2026-08-18 | VAI-008 | Export S3Gen's flow-encoder (bucketed) + CAMPPlus (fixed window) to ONNX, closing the `mu`/`spks` export gap found while starting VAI-006 | `65b1642` |
 | 2026-08-18 | VAI-005 | Export PerthNet encoder; implement STFT/ISTFT/resample watermarking pipeline in `watermark.rs` | `91c92ea` |

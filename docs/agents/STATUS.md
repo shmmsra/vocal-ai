@@ -226,6 +226,50 @@ tag + HF Hub publish (full parity gate including T3, run `32571043262`) — both
 `workflow_dispatch`, confirming the anti-recursion workaround works as designed. See
 `docs/decisions/0014-version-bump-driven-release-triggers.md` and `docs/issues.md`'s VAI-016.
 
+**Resolved (VAI-012, ADR-0015, closed 2026-08-22)**: `--show-progress` flag on `vocalai`
+(default off, byte-identical output without it). `vocalai-core::pipeline` gained
+`PipelinePhase`/`ProgressEvent` and a new `on_progress: &mut dyn FnMut(ProgressEvent)`
+parameter on `synthesize()`, wrapping the existing `decoder_step` closure to report per-token
+T3 decode progress plus coarse phase markers (voice conditioning / decoding / vocoding /
+watermarking) — `t3.rs` itself unchanged. `vocalai-core` stays UI-agnostic (no new
+dependency); `vocalai-cli` added `indicatif` and renders phase lines + a live decode bar.
+Manually verified on real hardware (CPU EP): baseline output unchanged, and with the flag all
+four phase labels appeared in order with the decode bar advancing, for both a ~1s and a
+~7.6s synthesis. Separately, at the repo owner's request while approving the plan (not
+original ticket scope): `scripts/install.sh`/`install.ps1` now track installed CLI/model
+versions in the install directory (`.vocalai_version`; reuse the HF-published
+`MODELS_VERSION` file) and skip re-downloading whichever half is already up to date. Manual
+testing on this session's own sandbox, plus direct repo-owner review of the plan, caught three
+real design bugs before they shipped: (1) the original design used
+`api.github.com/repos/.../releases/latest` for the CLI version lookup, which hit that
+endpoint's unauthenticated rate limit live (60/hour/IP, shared with unrelated traffic on the
+same IP) — fixed by reading the tag off the existing download URL's redirect `Location` header
+instead, the same URL the real download already hits; (2) the original design fetched
+`MODELS_VERSION` as just another file in the generic per-file download loop, so an interrupted
+download left a version marker on disk claiming a genuinely incomplete model set (missing most
+`.onnx` files) was current — fixed by excluding it from that loop and writing it explicitly
+only once every other file has downloaded successfully; (3) the original design silently fell
+back to a full download whenever any version-check lookup failed, including a confirmed rate
+limit — the repo owner explicitly rejected this after reviewing the plan (a rate-limited lookup
+followed by immediately attempting the real ~4GB download would likely just fail the same way
+again) — fixed so both scripts now detect a rate-limit response specifically (HTTP 429, or
+GitHub's 403-with-`x-ratelimit-remaining:0`) and exit with a clear error, and per the repo
+owner's further instruction, *any other* version-check failure is now also fatal rather than a
+silent fallback. `install.sh`'s `fail_if_rate_limited` helper was unit-tested in isolation (all
+4 cases correct); the interrupted-download self-detection (bug 2's fix) was verified live
+end-to-end against the real `v0.1.3` release + HF repo — an interrupted first run correctly left
+no `MODELS_VERSION` stamp, and a rerun against that state correctly skipped only the binary
+(already complete) while re-listing and resuming the model download (correctly not claiming
+"up to date"). **Not completed this session**: a full ~4GB/27-file model download run to
+completion (stopped partway through twice, at the user's request, to avoid the multi-GB/slow-
+tier transfer time) — so the "models are up to date" skip path was verified against a
+genuinely-interrupted state (correctly not skipping) but not against a genuinely-complete one
+(correctly skipping); no live 429/403 response was triggered against the real endpoints (rate-
+limit detection was verified via the unit test, not a live trigger). `install.ps1`'s equivalent
+logic (including the new rate-limit detection) was written symmetrically but not run on real
+Windows this session (none available) — see `docs/manual-testing.md` and ADR-0015's
+Consequences.
+
 **CI**: split into two workflows since 2026-08-17 — `.github/workflows/ci.yml` (fast:
 fmt/clippy/`cargo test`/`pytest -m "not parity"`) and `.github/workflows/parity.yml` (real-
 checkpoint ONNX-vs-PyTorch tests, `pytest -m "parity and not heavy_build"` — 7 of the 8:
@@ -249,9 +293,14 @@ The next logical work, in priority order. Update at the end of every session.
    that hasn't been done yet (only the model weights were checked, in ADR-0008).
 2. VAI-014 — bucket `s3gen_estimator.onnx`'s time dimension so CoreML covers the full pipeline
    with no CPU carve-out (see the VAI-011 residual-risk note above for the diagnosis).
-3. VAI-012 — `--show-progress` console progress indicator (split out of VAI-011).
-4. Candidate, not yet scoped: revisit ADR-0007's `parity.yml` T3 exclusion now that public
+3. Candidate, not yet scoped: revisit ADR-0007's `parity.yml` T3 exclusion now that public
    `ubuntu-latest` has 16GB RAM (see ADR-0013) — newly viable, not required.
+4. Candidate, not yet scoped: verify `scripts/install.ps1`'s new version-skip/rate-limit-
+   detection logic (VAI-012, ADR-0015) on a real Windows machine — written symmetrically to
+   `install.sh`, not yet live-tested (none available this session); also run `install.sh`'s
+   full ~4GB model download to completion at least once (this session stopped it partway
+   through twice, at the user's request) to confirm the "models are up to date" skip path
+   actually triggers against a genuinely-complete state, not just an interrupted one.
 5. Candidate, not yet scoped: the anonymous HF Hub model download is noticeably slow
    (~300KB/s observed on Windows for `t3_decoder.onnx`) — Cloudflare R2, GitHub-Releases
    file-splitting, and installer-script parallelization were discussed as fixes on 2026-08-22,
@@ -259,8 +308,9 @@ The next logical work, in priority order. Update at the end of every session.
 6. See `docs/issues.md` for the full tracked-ticket list.
 
 **Closed 2026-08-22, not on this list**: VAI-007 (per-platform packaging) — closed by repo owner
-decision with Linux never live-tested and the memory/swap benchmark never gathered; see the
-"Resolved" note above and `docs/issues.md`'s Recently closed table.
+decision with Linux never live-tested and the memory/swap benchmark never gathered; VAI-012
+(`--show-progress` + install-script version-skip logic, ADR-0015) — see the "Resolved" note
+above and `docs/issues.md`'s Recently closed table.
 
 ---
 
@@ -268,14 +318,15 @@ decision with Linux never live-tested and the memory/swap benchmark never gather
 
 | Date | Ticket | Summary | Commit |
 |------|--------|---------|--------|
+| 2026-08-22 | VAI-012 | `--show-progress` flag (`PipelinePhase`/`ProgressEvent` in `vocalai-core`, `indicatif` rendering in `vocalai-cli` only) + install-script version-tracking/skip-if-up-to-date logic (ADR-0015); review/testing caught and fixed three real bugs (a shared-IP `api.github.com` rate limit; a premature `MODELS_VERSION` write; a silent fallback-to-download on any lookup failure, now fails fast on repo-owner instruction) | (pending commit) |
 | 2026-08-22 | VAI-007 | Per-platform packaging closed by repo owner decision — macOS + Windows install/synthesis verified for real, **Linux never live-tested** (no machine available) and memory/swap benchmark never gathered (no non-macOS baseline); CUDA/cuDNN artifacts remain `VAI-015` | — |
 | 2026-08-22 | VAI-013 | Closed as superseded by VAI-007's `release.yml` cross-platform build matrix (macos/windows/ubuntu, build-only without GPU hardware, per-OS artifacts) — confirmed once VAI-007's workflows actually ran live; CUDA artifacts remain deferred to VAI-015 | — |
 | 2026-08-22 | VAI-016 | Version-bump-driven `push`+`paths` triggers for `models-export.yml`/`release.yml` (ADR-0014); closed after a real push to `main` produced a genuine `v0.1.3` release + `models-v0.1.1` HF Hub publish, both fired via `push` not `workflow_dispatch` | `d4c64ad`, `e9f4825` |
 | 2026-08-20 | — | Correction: walked back VAI-011's "CoreML tuning reaches CPU parity" claim after the repo owner's real-world re-test found no improvement — docs-only, no code change | _pending_ |
-| 2026-08-19 | VAI-011 | `--use-gpu`/`--use-cpu` execution-provider selection (CPU by default), `error_on_failure()` instead of silent hardware-EP fallback, `Makefile` OS-based feature auto-detection, CoreML tuned (`CPUAndGPU`+`FastPrediction`+`RequireStaticInputShapes`) to fix a measured 30-40% slowdown vs CPU, S3Gen flow estimator pinned to CPU on CoreML (real fix tracked as VAI-014) | _pending_ |
-| 2026-08-18 | — | Add `make export` (+ `scripts/export-all.{sh,ps1}`) wrapping the 8-10 `export/` scripts `docs/dev-setup.md` §11.1 documents into one command; `--with-voice-cloning` opt-in for the two extra `--voice`-only exports | _pending_ |
-| 2026-08-18 | VAI-006 | `--voice` zero-shot cloning (part B.2, ADR-0011): `mel.rs`, `voice_encoder.rs`, `s3tokenizer.rs`, `campplus.rs`; `pipeline.rs`'s `DefaultVoice` → `VoiceConditioning` with a `from_reference` constructor. Closes VAI-006. | _pending_ |
-| 2026-08-18 | — | Fix `make check` on Windows/MSVC (ADR-0010): drop `tokenizers`' static-CRT `esaxx_fast` to resolve the `LNK2038` CRT mismatch; make the `test-py*` Makefile recipes `cmd.exe`-portable via `$(OS)`/`$(wildcard)` | _pending_ |
+| 2026-08-19 | VAI-011 | `--use-gpu`/`--use-cpu` execution-provider selection (CPU by default), `error_on_failure()` instead of silent hardware-EP fallback, `Makefile` OS-based feature auto-detection, CoreML tuned (`CPUAndGPU`+`FastPrediction`+`RequireStaticInputShapes`) to fix a measured 30-40% slowdown vs CPU, S3Gen flow estimator pinned to CPU on CoreML (real fix tracked as VAI-014) | `f1c74af` |
+| 2026-08-18 | — | Add `make export` (+ `scripts/export-all.{sh,ps1}`) wrapping the 8-10 `export/` scripts `docs/dev-setup.md` §11.1 documents into one command; `--with-voice-cloning` opt-in for the two extra `--voice`-only exports | `a75edc4` |
+| 2026-08-18 | VAI-006 | `--voice` zero-shot cloning (part B.2, ADR-0011): `mel.rs`, `voice_encoder.rs`, `s3tokenizer.rs`, `campplus.rs`; `pipeline.rs`'s `DefaultVoice` → `VoiceConditioning` with a `from_reference` constructor. Closes VAI-006. | `4d97b0d` |
+| 2026-08-18 | — | Fix `make check` on Windows/MSVC (ADR-0010): drop `tokenizers`' static-CRT `esaxx_fast` to resolve the `LNK2038` CRT mismatch; make the `test-py*` Makefile recipes `cmd.exe`-portable via `$(OS)`/`$(wildcard)` | `ca0107a` |
 | 2026-08-18 | VAI-009 | Fix two trace-baking bugs in `export_hifigan.py` so `speech_feat` is a genuine dynamic ONNX axis; extend `check_hifigan` to 3 frame counts — unblocks VAI-006 part B.1's end-to-end acceptance criterion | `9ff4b4e` |
 | 2026-08-18 | VAI-008 | Export S3Gen's flow-encoder (bucketed, ADR-0009) + CAMPPlus (fixed 400-frame window) to ONNX, closing the `mu`/`spks` gap found while starting Milestone 6 | `65b1642` |
 | 2026-08-18 | VAI-005 | Export PerthNet encoder; implement STFT/ISTFT/resample watermarking pipeline (`watermark.rs`); pin `setuptools<81` (real fix for a `pkg_resources` removal breaking `resemble-perth`) | `91c92ea` |

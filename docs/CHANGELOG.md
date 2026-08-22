@@ -6,6 +6,49 @@
 
 ---
 
+## 2026-08-22 — VAI-012: `--show-progress` + install-script version-skip logic (ADR-0015)
+
+**What changed**: `vocalai-core::pipeline` gained `PipelinePhase`/`ProgressEvent` and a new
+`on_progress: &mut dyn FnMut(ProgressEvent)` parameter on `synthesize()`, wrapping the existing
+`decoder_step` closure (no changes to `t3.rs`) to report per-token decode progress plus coarse
+phase markers (voice conditioning / decoding / vocoding / watermarking). `vocalai-cli` added
+`indicatif` and a new `--show-progress` flag (default off, byte-identical output without it)
+that renders phase lines and a live decode progress bar. Separately -- added at the repo owner's
+request while approving the plan, not in the original ticket text -- `scripts/install.sh`/
+`install.ps1` now track the installed CLI/model versions in the install directory
+(`.vocalai_version`, reusing the HF-published `MODELS_VERSION` file) and skip re-downloading
+whichever half is already up to date, logging what got skipped.
+
+**Why**: VAI-012 (`docs/issues.md`) asked for progress visibility on long synthesis runs, since
+T3's decode loop dominates wall-clock and gives no feedback today. The install-script addition
+avoids repeatedly re-fetching a multi-GB model set or a release binary that hasn't changed.
+
+**What was rejected**: a `VOCALAI_FORCE_INSTALL` bypass flag for the new skip logic (repo owner's
+explicit call -- delete the install dir to force a clean reinstall instead); using
+`api.github.com/repos/.../releases/latest` for the version lookup (hit that endpoint's
+unauthenticated rate limit live during this session's own testing -- switched to reading the tag
+off the existing download URL's redirect header instead, see ADR-0015); treating the HF-hosted
+`MODELS_VERSION` file as just another item in the generic per-file download loop (an interrupted
+first draft of this exact design left a version marker on disk claiming a genuinely incomplete
+model set was current -- caught by manual testing, fixed by writing that marker only after the
+whole loop succeeds); **an initial version of this ADR's design that silently fell back to a full
+download whenever the version-check lookup failed for any reason, including a confirmed rate
+limit** -- the repo owner explicitly rejected that after reviewing the plan: rate-limiting is a
+structured, unambiguous signal that immediately attempting the real 26-file/~4GB download would
+likely fail the same way again, so both scripts now detect a rate-limit response specifically
+(HTTP 429, or GitHub's 403-with-`x-ratelimit-remaining:0`) and exit with a clear error instead --
+and, per the repo owner's further instruction, *any* other version-check failure is now also
+fatal rather than a silent fallback.
+
+**What's next**: `install.ps1`'s changes (including the new rate-limit detection) are written
+symmetrically to the verified `install.sh` but not yet run on a real Windows machine (none
+available this session); a full model download was not run to completion this session (stopped
+partway through twice, at the user's request, to avoid the multi-GB/slow-tier transfer time) --
+see `docs/manual-testing.md`'s new section and ADR-0015's Consequences for exactly what was and
+wasn't verified.
+
+---
+
 ## 2026-08-22 — VAI-007: closed by repo owner decision
 
 **What changed**: no code — `docs/issues.md`/`docs/agents/STATUS.md` updated to close VAI-007

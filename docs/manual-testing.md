@@ -816,3 +816,100 @@ memory/swap-benchmark step remain unverified.
 ---
 
 *Add new sections below this line as features land. Group by feature area (e.g. CLI, export pipeline, EP selection, voice cloning).*
+
+---
+
+## `--show-progress` console progress indicator (VAI-012)
+
+**Test command(s)**:
+```bash
+# Baseline -- no flag, confirm zero output change:
+./vocalai --text "hello world" --out out.wav --models-dir models
+# With progress:
+./vocalai --text "This is a somewhat longer sentence so the decode loop runs long enough to actually see the bar move." \
+  --out out2.wav --models-dir models --show-progress
+```
+
+**Setup**: run from a real terminal (not through a pipe/log redirect) -- `indicatif`
+auto-hides all drawing when stderr isn't a tty (`ProgressDrawTarget::is_hidden()`), by
+design, so redirected/piped output won't show the bar even with the flag on; that's
+expected, not a bug.
+
+**What to observe**:
+- Baseline command's stderr is unchanged from before this change (`Using <EP>`, nothing else
+  until `Wrote out.wav`).
+- With `--show-progress`: `==> Preparing voice conditioning...`, then a live progress bar
+  labeled "Decoding speech tokens..." advancing token-by-token (bounded by
+  `--max-new-tokens`, may finish short if EOS is hit first), then `==> Vocoding...`, then
+  `==> Watermarking...`, then `Wrote out2.wav`.
+
+**Pass criteria**: baseline output byte-identical to pre-VAI-012 behavior; with the flag,
+all four phase labels appear in order and the decode bar visibly advances (verified in this
+session on real hardware: `Using CPU execution provider`, phase lines, and a real WAV
+produced for both a short 1s and a longer ~7.6s synthesis, `--show-progress` on and off).
+
+**Fail indicators**: bar never advances or gets stuck at 0/max (progress callback not wired
+to the decode loop); phase labels print out of order or duplicate; baseline (no-flag) output
+differs from before this change (the no-op closure isn't truly free).
+
+---
+
+## Install-script version tracking + skip-if-up-to-date (VAI-012)
+
+**Test command(s)**:
+```bash
+# Fresh install:
+VOCALAI_INSTALL_DIR=./scratch-vocalai bash scripts/install.sh
+# Re-run immediately, no version bump:
+VOCALAI_INSTALL_DIR=./scratch-vocalai bash scripts/install.sh
+```
+(Windows: same two runs with `install.ps1`, `$env:VOCALAI_INSTALL_DIR` instead.)
+
+**What to observe**: the first run downloads the binary and lists+downloads every model
+file as before, then writes `./scratch-vocalai/.vocalai_version` and
+`./scratch-vocalai/models/MODELS_VERSION`. The **second** run prints `==> vocalai binary is
+up to date (vX.Y.Z), skipping download` and `==> models are up to date (X.Y.Z), skipping
+model download`, and does not re-download the binary archive or list/fetch any model file.
+
+**Pass criteria**: second run completes in a few seconds (two small metadata requests only:
+a HEAD against the release-redirect URL, a tiny `MODELS_VERSION` text fetch), both "up to
+date" lines appear, and `./scratch-vocalai/vocalai --text "hello world" --out out.wav
+--models-dir ./scratch-vocalai/models` still produces a valid, non-silent WAV afterward
+(confirming the skip didn't leave anything unusable).
+
+**Fail indicators**: second run re-downloads the binary or any model file (skip logic
+broken); second run falsely reports "up to date" against a deliberately-corrupted install
+(delete one `.onnx` file from `models/` and rerun -- should NOT report up to date, since at
+least the `find ... -name '*.onnx'` presence check would still pass if any other `.onnx`
+file remains, so this specific corruption mode is a known gap, not a guaranteed catch -- see
+ADR-0015's Consequences); `.vocalai_version`/`MODELS_VERSION` missing after a successful
+first run; a rate-limited lookup falls back to attempting a download instead of exiting with
+an error (see ADR-0015 -- this must never happen after the fail-fast fix).
+
+**Verified this session (macOS, `install.sh`, live `v0.1.3` release + HF repo)**: the
+`fail_if_rate_limited` helper was unit-tested in isolation (429 → exits 1; 403 +
+`x-ratelimit-remaining: 0` → exits 1; 403 without that header → passes through; a normal 302 →
+passes through) -- all four cases matched expectations. End-to-end: a first install run,
+deliberately interrupted mid-download (`timeout`), correctly downloaded the binary + wrote
+`.vocalai_version`, then correctly started listing + downloading model files without ever
+writing `MODELS_VERSION` (confirming the ordering fix -- an incomplete model set leaves no
+version stamp behind). A second run against that exact interrupted state correctly printed
+`vocalai binary is up to date`, skipped the binary re-download, and correctly did **not**
+claim the models were up to date (since `MODELS_VERSION` was genuinely absent) -- it re-listed
+and resumed downloading model files as expected. **Not completed this session**: a full
+~4GB/27-file model download run to completion (stopped partway through at the user's request,
+twice, to avoid spending session time on HF Hub's slow anonymous-tier transfer) -- so the
+"models are up to date" skip path was verified against a genuinely-interrupted state (correctly
+NOT skipping) but not against a genuinely-complete one (correctly skipping). The write-after-
+full-success logic itself is simple and was reviewed carefully, but hasn't been watched running
+end to end. Also not observed live this session: an actual 429/403-rate-limited response from
+the real GitHub/HF endpoints during a real install run (the rate-limit-detection *logic* was
+verified via the unit test above, not via triggering a live rate limit against the real
+service).
+
+**Not verified this session**: `install.ps1`'s equivalent (`[System.Net.HttpWebRequest]`
+redirect-header lookup + rate-limit detection, `Get-Content`/`Set-Content` version tracking) --
+no Windows machine available. Logic was written symmetrically to the verified `install.sh` and
+reviewed by hand,
+but needs a real Windows run before being fully trusted (matching this repo's established
+`install.ps1` verification gap pattern, see VAI-007's own notes above).

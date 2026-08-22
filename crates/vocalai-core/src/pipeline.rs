@@ -49,6 +49,28 @@ pub struct SynthesisParams {
     pub max_new_tokens: usize,
 }
 
+/// Coarse pipeline phase, for optional progress reporting (VAI-012). Purely
+/// descriptive -- `vocalai-core` renders nothing itself; see [`ProgressEvent`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PipelinePhase {
+    VoiceConditioning,
+    Decoding,
+    Vocoding,
+    Watermarking,
+}
+
+/// Progress event emitted by [`synthesize`] via its `on_progress` callback
+/// (VAI-012). `vocalai-core` stays UI-agnostic: this is a plain data type, with
+/// no rendering (that lives in `vocalai-cli`, e.g. behind `--show-progress`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProgressEvent {
+    /// Entered a new coarse pipeline phase.
+    Phase(PipelinePhase),
+    /// One T3 decode-loop step (dominant runtime cost) completed. `step` is
+    /// 1-based and may stop short of `max` if EOS is hit first.
+    DecodeStep { step: usize, max: usize },
+}
+
 #[derive(Debug)]
 pub enum PipelineError {
     Session(ort::Error),
@@ -390,7 +412,9 @@ pub fn synthesize(
     bundle: &mut ModelBundle,
     params: &SynthesisParams,
     rng: &mut impl Rng,
+    on_progress: &mut dyn FnMut(ProgressEvent),
 ) -> Result<Vec<f32>, PipelineError> {
+    on_progress(ProgressEvent::Phase(PipelinePhase::VoiceConditioning));
     let voice = match &params.voice {
         Some(wav_path) => VoiceConditioning::from_reference(bundle, wav_path)?,
         None => bundle.default_voice.clone(),
@@ -435,13 +459,24 @@ pub fn synthesize(
         cfg_weight: params.cfg_weight,
     };
 
+    on_progress(ProgressEvent::Phase(PipelinePhase::Decoding));
     let t3_decoder_session = &mut bundle.t3_decoder_session;
     let t3_speech_emb = &bundle.t3_speech_emb;
     let t3_speech_pos_emb = &bundle.t3_speech_pos_emb;
+    let max_new_tokens = params.max_new_tokens;
+    let mut decode_step = 0usize;
     let raw_tokens = t3::generate_speech_tokens(
         cond_prefill_embeds,
         &sampling_config,
-        |embeds, past_kv| t3::run_decoder(t3_decoder_session, embeds, past_kv),
+        |embeds, past_kv| {
+            let result = t3::run_decoder(t3_decoder_session, embeds, past_kv);
+            decode_step += 1;
+            on_progress(ProgressEvent::DecodeStep {
+                step: decode_step,
+                max: max_new_tokens,
+            });
+            result
+        },
         |tok, pos| t3::embed_speech_token(t3_speech_emb, t3_speech_pos_emb, tok, pos),
         |logits| t3::sample_token(logits, rng),
     )?;
@@ -485,6 +520,7 @@ pub fn synthesize(
     );
 
     // 5. S3Gen: flow-encoder bucket call -> Euler ODE loop -> HiFiGAN.
+    on_progress(ProgressEvent::Phase(PipelinePhase::Vocoding));
     let bucket =
         s3gen::select_bucket(token_len).expect("truncated above to fit the largest bucket");
     ModelBundle::ensure_flow_encoder_session(
@@ -510,6 +546,7 @@ pub fn synthesize(
     let waveform: Vec<f32> = waveform_2d.row(0).to_vec();
 
     // 6. Watermark.
+    on_progress(ProgressEvent::Phase(PipelinePhase::Watermarking));
     let perthnet_session = &mut bundle.perthnet_session;
     let mut encoder_step =
         |magspec: &Array2<f32>| watermark::run_encoder(perthnet_session, magspec);

@@ -73,6 +73,7 @@ What becomes easier? What becomes harder? What new commitments does this create?
 | [0012](0012-execution-provider-selection-use-gpu-use-cpu-auto.md) | Execution-provider selection (`--use-gpu`/`--use-cpu`, CPU by default), tuning CoreML for T3's decode loop, and pinning `s3gen_estimator.onnx` to CPU | Accepted |
 | [0013](0013-hf-hub-model-distribution-and-release-packaging.md) | HuggingFace Hub model distribution + release packaging (VAI-007): bundle-at-build, CI-driven export/publish, structural-only smoke tests, CUDA bundling deferred (VAI-015) | Accepted |
 | [0014](0014-version-bump-driven-release-triggers.md) | Version-bump-driven triggers for model-publish + release pipelines (VAI-016): push+paths filters instead of a bot-pushed tag, no new secrets/tokens | Accepted |
+| [0015](0015-cli-progress-events-and-install-version-skip.md) | CLI progress events (`--show-progress`, VAI-012) and install-script version-skip logic: UI-agnostic core callback, redirect-header version lookups instead of `api.github.com`, models version stamped only after full download, fail-fast (not fallback-to-download) on any version-check failure including rate-limiting | Accepted |
 
 *Add new rows as ADRs accumulate.*
 
