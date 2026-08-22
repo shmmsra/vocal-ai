@@ -3,4 +3,4 @@ resolver = "2"
 members = ["crates/vocalai-core", "crates/vocalai-cli"]
 
 [workspace.package]
-version = "0.1.2"
+version = "0.1.3"
