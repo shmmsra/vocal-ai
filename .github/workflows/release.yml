@@ -15,14 +15,23 @@
 # bundle-everything design. Real end-to-end audio validation is a manual step -- see
 # docs/manual-testing.md.
 #
-# Triggers: a `v*` tag (also cuts a real GitHub Release) or workflow_dispatch (build +
-# upload a workflow artifact for inspection, without publishing a release).
+# Triggers: a `v*` tag (also cuts a real GitHub Release), a push to main that bumps the
+# workspace package version in Cargo.toml (VAI-016 -- same effect as a `v*` tag push, minus
+# a human having to push the tag by hand; a leading job resolves the version and skips the
+# rest of the pipeline if a matching `vX.Y.Z` tag already exists), or workflow_dispatch
+# (build + upload a workflow artifact for inspection, without publishing a release).
 
 name: Release build
 
 on:
   push:
+    # `paths` only applies to the `branches` match, not the `tags` one: GitHub skips path
+    # filtering entirely for a newly-created ref (which every tag push is, by definition),
+    # so a manual `git tag vX.Y.Z && git push` still runs unconditionally as before --
+    # `paths: ["Cargo.toml"]` only gates the new main-push path (VAI-016).
     tags: ["v*"]
+    branches: [main]
+    paths: ["Cargo.toml"]
   workflow_dispatch:
     inputs:
       hf_revision:
@@ -42,8 +51,43 @@ permissions:
   contents: write
 
 jobs:
+  resolve-release:
+    name: Resolve whether this run should cut a real release
+    runs-on: ubuntu-latest
+    outputs:
+      should_release: ${{ steps.resolve.outputs.should_release }}
+      tag_name: ${{ steps.resolve.outputs.tag_name }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve version/tag and whether to release
+        id: resolve
+        run: |
+          if [ "${{ github.ref_type }}" = "tag" ]; then
+            # Direct `v*` tag push (manual, unchanged from before VAI-016): always release.
+            echo "should_release=true" >> "$GITHUB_OUTPUT"
+            echo "tag_name=${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
+          elif [ "${{ github.event_name }}" = "push" ]; then
+            VERSION=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
+            TAG="v$VERSION"
+            echo "tag_name=$TAG" >> "$GITHUB_OUTPUT"
+            if git ls-remote --exit-code --tags origin "refs/tags/$TAG" >/dev/null 2>&1; then
+              echo "should_release=false" >> "$GITHUB_OUTPUT"
+              echo "Cargo.toml's workspace version is $VERSION, but tag $TAG already exists -- nothing to release." >> "$GITHUB_STEP_SUMMARY"
+            else
+              echo "should_release=true" >> "$GITHUB_OUTPUT"
+              echo "Cargo.toml's workspace version is $VERSION, tag $TAG does not exist yet -- releasing." >> "$GITHUB_STEP_SUMMARY"
+            fi
+          else
+            # workflow_dispatch: build + validate only, matching the existing dry-run behavior.
+            echo "should_release=false" >> "$GITHUB_OUTPUT"
+            echo "tag_name=" >> "$GITHUB_OUTPUT"
+          fi
+
   build:
     name: Build + package (${{ matrix.artifact_name }})
+    needs: resolve-release
+    if: github.event_name == 'workflow_dispatch' || needs.resolve-release.outputs.should_release == 'true'
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     strategy:
@@ -137,7 +181,10 @@ jobs:
           if-no-files-found: error
 
       - name: Upload release asset
-        if: github.ref_type == 'tag'
+        if: needs.resolve-release.outputs.should_release == 'true'
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ needs.resolve-release.outputs.tag_name }}
+          target_commitish: ${{ github.sha }}
+          generate_release_notes: true
           files: dist/${{ matrix.artifact_name }}.*

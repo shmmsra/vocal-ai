@@ -1685,7 +1685,7 @@ dependencies = [
 
 [[package]]
 name = "vocalai-cli"
-version = "0.1.0"
+version = "0.1.2"
 dependencies = [
  "clap",
  "rand 0.8.7",
@@ -1694,7 +1694,7 @@ dependencies = [
 
 [[package]]
 name = "vocalai-core"
-version = "0.1.0"
+version = "0.1.2"
 dependencies = [
  "hound",
  "ndarray",

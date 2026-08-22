@@ -170,26 +170,42 @@ for a genuinely different reader. Depends on `VAI-007`.
 
 ---
 
-### VAI-016 · P3 · OPEN · CI/Release
+### VAI-016 · P3 · IN PROGRESS · CI/Release
 **Version-bump-driven triggers for the model-publish + release pipelines (replace manual dispatch)**
 
+**Implemented 2026-08-22, see ADR-0014 — one deliberate design deviation from the acceptance
+criteria as originally written**: a workflow-pushed tag does not fire other workflows' tag-push
+triggers (`GITHUB_TOKEN` anti-recursion safeguard), and the repo owner explicitly ruled out the
+standard workarounds (PAT secret, GitHub App token, `gh workflow run` dispatch) as unwanted
+ongoing management overhead. So instead of "auto-create/push a tag which triggers the pipeline,"
+both workflows gained a direct `paths`-filtered `push: branches: [main]` trigger — the version-
+file edit landing on `main` *is* the trigger; the tag is still created afterward, but purely as a
+record/release-anchor, no longer relied on to trigger anything. Net effect for the ticket's intent
+("bump a file, push, pipeline runs") is the same; the mechanism differs from the literal wording
+below. Not yet closed: needs a real push-to-`main` run to confirm the triggers/guards behave as
+designed in live GitHub Actions (see `docs/manual-testing.md`), and `MODELS_VERSION`'s first
+landing is expected to kick off one real baseline publish (harmless, see ADR-0014's addendum).
+
 **Acceptance criteria**:
-- [ ] Promote the duplicated `version = "0.1.0"` in `vocalai-cli`/`vocalai-core`'s `Cargo.toml` to
+- [x] Promote the duplicated `version = "0.1.0"` in `vocalai-cli`/`vocalai-core`'s `Cargo.toml` to
       a single `[workspace.package] version`, inherited via `version.workspace = true` — one
       source of truth for the CLI/package version.
-- [ ] A new root-level `MODELS_VERSION` file (plain text) as the model artifacts' version — no
+- [x] A new root-level `MODELS_VERSION` file (plain text) as the model artifacts' version — no
       existing home for this since `models/` is git-ignored.
-- [ ] A workflow step/job that, on push to `main`, compares each version against its last
+- [x] A workflow step/job that, on push to `main`, compares each version against its last
       matching git tag (`v*` for the Cargo version, `models-v*` for `MODELS_VERSION`) and only
-      proceeds if it actually changed — avoids firing on unrelated edits to either file.
-- [ ] On a genuine model-version bump: auto-create/push a `models-vN` tag and trigger
+      proceeds if it actually changed — avoids firing on unrelated edits to either file. (Uses an
+      exact tag-existence check rather than lexicographic "last tag" comparison — see ADR-0014.)
+- [x] On a genuine model-version bump: auto-create/push a `models-vN` tag and trigger
       `models-export.yml` (no more manual `workflow_dispatch`); tag the published HF Hub revision
-      to match.
-- [ ] On a genuine package-version bump: auto-create/push a `vX.Y.Z` tag, which triggers the
-      existing tag-triggered path in `release.yml` unchanged.
-- [ ] Release notes standardized via GitHub's built-in `generate_release_notes: true` (already
+      to match. (Triggering is via `push`+`paths` directly, not a tag-push chain — see ADR-0014.)
+- [x] On a genuine package-version bump: auto-create/push a `vX.Y.Z` tag — `release.yml` now
+      creates this tag itself via `softprops/action-gh-release`'s `tag_name` input as part of
+      publishing, rather than a separate git-tag-push step triggering its existing tag-push path;
+      the existing manual `push: tags: ["v*"]` path itself is untouched — see ADR-0014.
+- [x] Release notes standardized via GitHub's built-in `generate_release_notes: true` (already
       supported by `softprops/action-gh-release`) instead of hand-rolled commit-range diffing.
-- [ ] `docs/dev-setup.md` §10 updated to describe "bump the version file, push" instead of manual
+- [x] `docs/dev-setup.md` §10 updated to describe "bump the version file, push" instead of manual
       `gh workflow run`/tag commands; `docs/manual-testing.md` updated to match.
 
 **Notes**: Raised by the repo owner while reviewing `VAI-007`; deliberately split out rather than

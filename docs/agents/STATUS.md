@@ -1,6 +1,6 @@
 # vocal-ai — Current Status & Backlog
 
-> Updated: 2026-08-20
+> Updated: 2026-08-22
 > For the full feature history see [`docs/CHANGELOG.md`](../CHANGELOG.md).
 > For per-ticket detail see [`docs/issues.md`](../issues.md).
 > For the full phase breakdown see [`docs/requirements.md`](../requirements.md).
@@ -192,6 +192,22 @@ install-to-audio pipeline confirmed working on macOS. Not yet done: the same che
 Windows/Linux, and the CPU-fallback-equivalence/memory-swap-benchmark half of the manual
 validation checklist (`docs/manual-testing.md`).
 
+**In progress (VAI-016, ADR-0014, 2026-08-22)**: version-bump-driven triggers for
+`models-export.yml`/`release.yml`, replacing manual `workflow_dispatch`/tag-push as the primary
+flow. `Cargo.toml` gains a single `[workspace.package] version` (`vocalai-cli`/`vocalai-core` now
+inherit it via `version.workspace = true`); a new root `MODELS_VERSION` file tracks the model
+artifacts' version. Both workflows gained a `paths`-filtered `push: branches: [main]` trigger and
+a leading guard step that skips the job if a tag for the current version already exists —
+implemented as a direct push trigger rather than an auto-pushed-tag-triggers-workflow chain,
+because a workflow-authored tag push doesn't fire other workflows' tag-push triggers
+(`GITHUB_TOKEN` anti-recursion safeguard), and the repo owner explicitly ruled out the standard
+workarounds (PAT secret, GitHub App token, `gh workflow run` dispatch) as unwanted management
+overhead. `release.yml` also gained `generate_release_notes: true`. Manual fallbacks
+(`workflow_dispatch`, direct `git tag && git push`) are unchanged. **Not yet closed**: this has
+only been verified locally (`cargo metadata`, YAML parse, `make check` — 77 Rust + 12 export + 16
+script tests, including 2 new ones) — no real push to `main` has exercised the new triggers yet.
+See `docs/decisions/0014-version-bump-driven-release-triggers.md` and `docs/issues.md`'s VAI-016.
+
 **CI**: split into two workflows since 2026-08-17 — `.github/workflows/ci.yml` (fast:
 fmt/clippy/`cargo test`/`pytest -m "not parity"`) and `.github/workflows/parity.yml` (real-
 checkpoint ONNX-vs-PyTorch tests, `pytest -m "parity and not heavy_build"` — 7 of the 8:
@@ -210,23 +226,25 @@ test-py-parity`/`make check`) and must be run manually before committing changes
 
 The next logical work, in priority order. Update at the end of every session.
 
-1. VAI-007 — finish per-platform packaging: the pipeline is live and verified end-to-end on
+1. VAI-016 — implemented this session (see ADR-0014, `docs/issues.md`), not yet closed: needs a
+   real push to `main` touching `MODELS_VERSION`/`Cargo.toml` to confirm the new triggers/guards
+   behave as designed in live GitHub Actions (not committed/pushed yet as of this writing — see
+   the manual test plan posted to the repo owner). Landing `MODELS_VERSION` for the first time is
+   expected to kick off one real baseline `models-export.yml` run (harmless, see ADR-0014's
+   addendum).
+2. VAI-007 — finish per-platform packaging: the pipeline is live and verified end-to-end on
    macOS (`v0.1.2` release + `scripts/install.sh` + real synthesis, see the "In progress" note
    above and ADR-0013). Remaining: the same install+synthesis check on Windows/Linux, plus the
    CPU-fallback-equivalence and memory/swap-benchmark halves of the manual validation checklist
    in `docs/manual-testing.md`, before calling Milestone 7 done.
-2. VAI-015 — Windows/Linux CUDA/cuDNN-bundled GPU release artifacts (split out of VAI-007,
+3. VAI-015 — Windows/Linux CUDA/cuDNN-bundled GPU release artifacts (split out of VAI-007,
    ADR-0013): needs real GPU hardware to smoke-test and an NVIDIA redistribution-license check
    that hasn't been done yet (only the model weights were checked, in ADR-0008).
-3. VAI-014 — bucket `s3gen_estimator.onnx`'s time dimension so CoreML covers the full pipeline
+4. VAI-014 — bucket `s3gen_estimator.onnx`'s time dimension so CoreML covers the full pipeline
    with no CPU carve-out (see the VAI-011 residual-risk note above for the diagnosis).
-4. VAI-012 — `--show-progress` console progress indicator (split out of VAI-011).
-5. VAI-013 — likely superseded by VAI-007's `release.yml` build matrix; confirm and close once
+5. VAI-012 — `--show-progress` console progress indicator (split out of VAI-011).
+6. VAI-013 — likely superseded by VAI-007's `release.yml` build matrix; confirm and close once
    VAI-007 lands (not closed unilaterally — see `docs/issues.md`).
-6. VAI-016 — version-bump-driven triggers for `models-export.yml`/`release.yml` (replace manual
-   `workflow_dispatch`/tag-push with a `MODELS_VERSION` file + `Cargo.toml` workspace version bump
-   detection, plus standardized GitHub-native release notes). Deliberately split out of VAI-007 so
-   the manual-trigger pipeline could ship and get a first real run first.
 7. Candidate, not yet scoped: revisit ADR-0007's `parity.yml` T3 exclusion now that public
    `ubuntu-latest` has 16GB RAM (see ADR-0013) — newly viable, not required.
 8. See `docs/issues.md` for the full tracked-ticket list.

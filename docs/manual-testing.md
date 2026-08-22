@@ -734,23 +734,29 @@ has not yet been executed on Windows — pending a follow-up manual run.
 
 ---
 
-### Release packaging pipeline: model publish + per-platform build (VAI-007, ADR-0013)
+### Release packaging pipeline: model publish + per-platform build (VAI-007/VAI-016, ADR-0013/ADR-0014)
 
 Both `models-export.yml` and `release.yml` are structural-only in CI — no real inference, no
 audio synthesis (per the repo owner's explicit instruction; see ADR-0013). The steps below are
 the manual, human-run counterpart that actually exercises a built artifact end-to-end, and must
-be run at least once per platform before announcing a release.
+be run at least once per platform before announcing a release. Since VAI-016 (ADR-0014), both
+workflows are primarily triggered by a version-bump pushed to `main`, not manual dispatch/tags —
+the commands below use that path; the manual fallbacks (`gh workflow run`, direct `git tag`) still
+work unchanged if you want to test a specific revision without bumping either version file.
 
 **Test command(s)**:
 
 ```bash
-# 1. Publish models (only if models/ changed since the last publish):
-gh workflow run models-export.yml
+# 1. Publish models (only if models/ changed since the last publish) -- bump MODELS_VERSION and
+#    push to main; skip if the version is unchanged (models-export.yml will no-op):
+$EDITOR MODELS_VERSION && git add MODELS_VERSION && git commit -m "models: bump to X.Y.Z" && git push
 gh run watch   # wait for it to finish
 
-# 2. Cut (or dry-run) a release build:
-git tag v0.0.0-test && git push origin v0.0.0-test   # or: gh workflow run release.yml
+# 2. Cut (or dry-run) a release build -- bump Cargo.toml's [workspace.package] version and push:
+$EDITOR Cargo.toml && git add Cargo.toml && git commit -m "release: bump to vX.Y.Z" && git push
 gh run watch
+# manual fallback, e.g. to test a one-off tag without a real version bump:
+#   git tag v0.0.0-test && git push origin v0.0.0-test   # or: gh workflow run release.yml
 
 # 3. Install exactly the way an end user would (release binary from GitHub, models from the
 #    public HF repo -- see ADR-0013's 2026-08-21 addendum for why these are no longer bundled

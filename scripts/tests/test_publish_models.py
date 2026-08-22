@@ -34,3 +34,10 @@ def test_publish_rejects_missing_third_party_licenses(tmp_path: Path, monkeypatc
     monkeypatch.setattr(pm, "THIRD_PARTY_LICENSES_SRC", tmp_path / "does-not-exist")
     with pytest.raises(pm.PublishError, match="THIRD_PARTY_LICENSES"):
         pm.publish(tmp_path, "shmmsra/vocal-ai-models", "hf_fake", "msg")
+
+
+def test_publish_rejects_missing_models_version(tmp_path: Path, monkeypatch):
+    (tmp_path / "a.onnx").write_bytes(b"not a real onnx file, just needs to exist for this check")
+    monkeypatch.setattr(pm, "MODELS_VERSION_SRC", tmp_path / "does-not-exist")
+    with pytest.raises(pm.PublishError, match="MODELS_VERSION"):
+        pm.publish(tmp_path, "shmmsra/vocal-ai-models", "hf_fake", "msg")

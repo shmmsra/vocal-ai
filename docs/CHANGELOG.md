@@ -6,6 +6,54 @@
 
 ---
 
+## 2026-08-22 — VAI-016: version-bump-driven triggers for model-publish + release pipelines
+
+**What changed**: consolidated `Cargo.toml`'s duplicated `version = "0.1.0"` into a single
+`[workspace.package] version = "0.1.2"` (matching the already-released `v0.1.2` tag), with
+`vocalai-cli`/`vocalai-core` switching to `version.workspace = true`. Added a root
+`MODELS_VERSION` file (seeded `0.1.0`). `models-export.yml` now also triggers on a push to
+`main` that touches `MODELS_VERSION`; `release.yml` now also triggers on a push to `main` that
+touches `Cargo.toml`. Each gained a leading guard step that skips the rest of the job if a tag
+for that exact version already exists (`models-vN` / `vX.Y.Z`), so a no-op edit or re-run is
+safe. On a genuine bump, `models-export.yml` publishes then pushes a matching `models-vN` tag
+and tags the HF Hub revision to match (`publish_models.py`'s new `--hf-tag`); `release.yml`
+passes `tag_name: vX.Y.Z` straight to `softprops/action-gh-release`, which creates the tag as
+part of publishing — no separate tag-push step needed there. Also: `generate_release_notes:
+true` replaces having no release-body content at all; `publish_models.py` now also copies
+`MODELS_VERSION` into the published HF repo folder so the version is visible on the Hub itself,
+not just in git. Manual fallbacks (`workflow_dispatch`, direct `git tag vX.Y.Z && git push`)
+are unchanged and still work.
+
+**Why**: manual publishing (`gh workflow run models-export.yml`) and releasing (`git tag &&
+git push`) required remembering the right command every time. The natural implementation —
+a CI job auto-creating and pushing the triggering tag — runs into a real GitHub Actions
+constraint: a git push made with the default `GITHUB_TOKEN` does not fire other workflows'
+`on: push: tags` triggers (anti-recursion safeguard). The repo owner explicitly ruled out the
+standard workarounds (a PAT secret, a GitHub App token, or an explicit `gh workflow run`
+dispatch) as more ongoing management overhead than the ticket warranted. See
+`docs/decisions/0014-version-bump-driven-release-triggers.md` for the full reasoning.
+
+**What was rejected**: PAT-based tag pushing (closest to VAI-016's literal wording, but needs a
+human to mint/rotate a token); a GitHub App token (disproportionate setup for a P3 ticket);
+`gh workflow run` dispatch (would still need a new `release.yml` input to fake the
+tag-triggered path); lexicographic "compare against the last matching tag" (an exact
+tag-existence check is simpler and equally effective). Full design in ADR-0014.
+
+**Verified this session**: `cargo metadata` confirms both crates resolve `version = "0.1.2"`
+from the workspace; both edited workflow YAML files parse cleanly; `make check` passes (77 Rust
+tests, 12 export parity tests, 16 script tests including 2 new ones for the `MODELS_VERSION`
+publish guard). **Not yet verified**: an actual push to `main` touching either version file —
+that's the real trigger under test, and can only be observed once this change is committed and
+pushed (see the manual test plan posted to the repo owner before commit).
+
+**What's next**: once merged, watch the first real `models-export.yml` run this triggers (no
+`models-v*` tag has ever existed, so landing `MODELS_VERSION` will kick off one real export/
+publish to establish the `models-v0.1.0` baseline — expected and harmless, see ADR-0014's
+addendum). VAI-007's remaining Windows/Linux manual-validation checklist is still separately
+open.
+
+---
+
 ## 2026-08-21 — VAI-007: install script hardening (retries + progress visibility) + real e2e verification
 
 **What changed**: `scripts/install.sh`/`install.ps1` now retry transient download failures

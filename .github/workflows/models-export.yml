@@ -10,14 +10,22 @@
 # job only runs on manual trigger, on a public-repo ubuntu-latest runner (4-core/16GB RAM),
 # well above the ~9GB peak that excluded T3 from the always-on per-push gate.
 #
-# Deliberately manual-only (workflow_dispatch), not triggered by export/** pushes:
-# publishing model weights to a public repo is a deliberate, externally-visible action, and
-# this is the heaviest job in the whole pipeline -- not something that should fire
-# automatically on every touch to export/ (including e.g. a test-only edit).
+# Deliberately NOT triggered by export/** pushes: publishing model weights to a public
+# repo is a deliberate, externally-visible action, and this is the heaviest job in the
+# whole pipeline -- not something that should fire automatically on every touch to
+# export/ (including e.g. a test-only edit). Instead (VAI-016), it fires on a push to
+# main that touches the root MODELS_VERSION file -- i.e. a deliberate version bump --
+# plus workflow_dispatch for manual/debug runs. A leading guard job skips the rest of
+# the pipeline if a `models-vN` tag for the current MODELS_VERSION already exists (e.g.
+# the file changed but its value didn't, or the workflow re-ran), so it's safe even
+# though the path filter alone can't tell content changes from no-op edits.
 
 name: Publish model artifacts
 
 on:
+  push:
+    branches: [main]
+    paths: ["MODELS_VERSION"]
   workflow_dispatch:
     inputs:
       with_voice_cloning:
@@ -25,9 +33,37 @@ on:
         type: boolean
         default: true
 
+permissions:
+  contents: write
+
 jobs:
+  check-version:
+    name: Check whether MODELS_VERSION was actually bumped
+    runs-on: ubuntu-latest
+    outputs:
+      should_run: ${{ steps.check.outputs.should_run }}
+      tag_name: ${{ steps.check.outputs.tag_name }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Compare MODELS_VERSION against existing tags
+        id: check
+        run: |
+          VERSION=$(tr -d '[:space:]' < MODELS_VERSION)
+          TAG="models-v$VERSION"
+          echo "tag_name=$TAG" >> "$GITHUB_OUTPUT"
+          if git ls-remote --exit-code --tags origin "refs/tags/$TAG" >/dev/null 2>&1; then
+            echo "should_run=false" >> "$GITHUB_OUTPUT"
+            echo "MODELS_VERSION is $VERSION, but tag $TAG already exists -- nothing to publish." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "should_run=true" >> "$GITHUB_OUTPUT"
+            echo "MODELS_VERSION is $VERSION, tag $TAG does not exist yet -- publishing." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
   export-and-publish:
     name: Export ONNX/npy artifacts, verify parity, publish to HF Hub
+    needs: check-version
+    if: github.event_name == 'workflow_dispatch' || needs.check-version.outputs.should_run == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
@@ -74,4 +110,14 @@ jobs:
       - name: Publish to HuggingFace Hub
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
-        run: export/.venv/bin/python scripts/publish_models.py --repo-id shmmsra/vocal-ai-models --models-dir models
+        run: |
+          export/.venv/bin/python scripts/publish_models.py \
+            --repo-id shmmsra/vocal-ai-models \
+            --models-dir models \
+            --hf-tag "${{ needs.check-version.outputs.tag_name }}"
+
+      - name: Tag this models version (record-keeping, matches the HF Hub tag above)
+        if: github.event_name == 'push'
+        run: |
+          git tag "${{ needs.check-version.outputs.tag_name }}"
+          git push origin "${{ needs.check-version.outputs.tag_name }}"

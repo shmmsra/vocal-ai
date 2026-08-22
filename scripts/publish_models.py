@@ -22,6 +22,7 @@ DEFAULT_REPO_ID = "shmmsra/vocal-ai-models"
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_MODELS_DIR = REPO_ROOT / "models"
 THIRD_PARTY_LICENSES_SRC = REPO_ROOT / "THIRD_PARTY_LICENSES"
+MODELS_VERSION_SRC = REPO_ROOT / "MODELS_VERSION"
 
 MODEL_CARD = """---
 license: mit
@@ -58,8 +59,18 @@ def require_hf_token() -> str:
     return token
 
 
-def publish(models_dir: Path, repo_id: str, token: str, commit_message: str) -> str:
+def publish(
+    models_dir: Path,
+    repo_id: str,
+    token: str,
+    commit_message: str,
+    hf_tag: str | None = None,
+) -> str:
     """Upload models_dir to repo_id, creating it (public) if it doesn't exist yet.
+
+    If hf_tag is given, also tags the resulting revision on the Hub (VAI-016 --
+    lets a `models-vN` git tag and an HF Hub tag point at the same published
+    artifacts, for traceability between the two).
 
     Returns the resulting commit SHA.
     """
@@ -69,6 +80,8 @@ def publish(models_dir: Path, repo_id: str, token: str, commit_message: str) -> 
         raise PublishError(f"no .onnx files found under {models_dir} -- run `make export` first")
     if not THIRD_PARTY_LICENSES_SRC.is_file():
         raise PublishError(f"THIRD_PARTY_LICENSES not found at {THIRD_PARTY_LICENSES_SRC}")
+    if not MODELS_VERSION_SRC.is_file():
+        raise PublishError(f"MODELS_VERSION not found at {MODELS_VERSION_SRC}")
 
     from huggingface_hub import HfApi
 
@@ -89,6 +102,13 @@ def publish(models_dir: Path, repo_id: str, token: str, commit_message: str) -> 
     if wrote_license:
         shutil.copyfile(THIRD_PARTY_LICENSES_SRC, license_dest)
 
+    # Carried into the HF repo itself (not just git) so anyone browsing the model repo can
+    # see which models-vN this snapshot corresponds to (VAI-016).
+    version_dest = models_dir / "MODELS_VERSION"
+    wrote_version = not version_dest.exists()
+    if wrote_version:
+        shutil.copyfile(MODELS_VERSION_SRC, version_dest)
+
     try:
         commit_info = api.upload_folder(
             folder_path=str(models_dir),
@@ -96,11 +116,15 @@ def publish(models_dir: Path, repo_id: str, token: str, commit_message: str) -> 
             repo_type="model",
             commit_message=commit_message,
         )
+        if hf_tag:
+            api.create_tag(repo_id=repo_id, repo_type="model", tag=hf_tag, revision=commit_info.oid)
     finally:
         if wrote_readme:
             readme.unlink(missing_ok=True)
         if wrote_license:
             license_dest.unlink(missing_ok=True)
+        if wrote_version:
+            version_dest.unlink(missing_ok=True)
 
     return commit_info.oid
 
@@ -110,11 +134,16 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--repo-id", default=DEFAULT_REPO_ID)
     parser.add_argument("--models-dir", type=Path, default=DEFAULT_MODELS_DIR)
     parser.add_argument("--commit-message", default="Publish exported model artifacts")
+    parser.add_argument(
+        "--hf-tag",
+        default=None,
+        help="Also tag the published revision on the Hub (e.g. models-v0.1.0) -- VAI-016",
+    )
     args = parser.parse_args(argv)
 
     try:
         token = require_hf_token()
-        sha = publish(args.models_dir, args.repo_id, token, args.commit_message)
+        sha = publish(args.models_dir, args.repo_id, token, args.commit_message, hf_tag=args.hf_tag)
     except PublishError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1

@@ -299,10 +299,12 @@ from §9.1's main list):
 See `docs/manual-testing.md` → "CLI: default-voice end-to-end synthesis" and "CLI: `--voice`
 zero-shot cloning end-to-end synthesis" for the full pass/fail criteria and known failure modes.
 
-## 10. Publish model artifacts + cut a release (Milestone 7 / VAI-007)
+## 10. Publish model artifacts + cut a release (Milestone 7 / VAI-007, VAI-016)
 
-See `docs/decisions/0013-hf-hub-model-distribution-and-release-packaging.md` for the full
-design. Two separate GitHub Actions workflows, both manual-trigger-only:
+See `docs/decisions/0013-hf-hub-model-distribution-and-release-packaging.md` and
+`docs/decisions/0014-version-bump-driven-release-triggers.md` for the full design. Two separate
+GitHub Actions workflows. Both are primarily **version-bump-driven** (bump a file, push to
+`main`) since VAI-016; both also keep a manual-trigger fallback for one-off/debug runs.
 
 ### 10.1 One-time setup: `HF_TOKEN` repo secret
 
@@ -318,17 +320,24 @@ gh secret set HF_TOKEN   # paste the token from https://huggingface.co/settings/
 
 ### 10.2 Publish model artifacts
 
-Trigger `models-export.yml` manually (from the Actions tab, or via `gh`):
+Bump the root **`MODELS_VERSION`** file (a plain-text version string, e.g. `0.1.1`) and push to
+`main`. `.github/workflows/models-export.yml` fires automatically on any push to `main` that
+touches `MODELS_VERSION`, but skips the rest of the job if a `models-vN` tag for that exact
+version already exists (so a no-op edit, or a re-run, doesn't re-publish).
+
+It runs `make export`, gates the result on the **full** `make test-py-parity` (including
+T3 — safe here because this runs on a public-repo `ubuntu-latest` runner with 16GB RAM, well
+above T3's ~9GB export peak; see ADR-0013), structurally validates every file (no
+inference — `scripts/smoke_test_artifact.py`), publishes to HF Hub (also tagging that revision
+`models-vN` to match, and carrying `MODELS_VERSION`'s value into the published HF repo folder
+for external traceability), then pushes a matching `models-vN` git tag.
+
+Manual fallback (from the Actions tab, or via `gh`) — same job, skips the version-bump guard:
 
 ```bash
 gh workflow run models-export.yml                                   # default: --with-voice-cloning
 gh workflow run models-export.yml -f with_voice_cloning=false        # default-voice path only
 ```
-
-It runs `make export`, gates the result on the **full** `make test-py-parity` (including
-T3 — safe here because this runs on a public-repo `ubuntu-latest` runner with 16GB RAM, well
-above T3's ~9GB export peak; see ADR-0013), structurally validates every file (no
-inference — `scripts/smoke_test_artifact.py`), then publishes to HF Hub.
 
 Local equivalent (e.g. to debug a publish failure), after `make export`:
 
@@ -340,15 +349,24 @@ make publish-models
 
 ### 10.3 Cut a release
 
-Push a `v*` tag (e.g. `git tag v0.1.0 && git push origin v0.1.0` — pushing remains your
-call, not an agent's) to trigger `.github/workflows/release.yml`. It builds `vocalai-cli`
-for macOS (CoreML), Windows (CPU), and Linux (CPU) — see ADR-0013 for why Windows/Linux
-CUDA-bundled artifacts are deferred (`VAI-015`) — downloads the current `shmmsra/vocal-ai-models`
-revision from HF Hub to structurally validate it, stages each platform's bundle (**binary +
-`THIRD_PARTY_LICENSES` + `LICENSE` only, not `models/`** — see ADR-0013's 2026-08-21 addendum:
-GitHub caps release assets at 2GiB/file and the ~4GB model set doesn't fit), smoke-tests it, and
-uploads it as a release asset. `workflow_dispatch` (optionally with a specific `hf_revision`)
-builds and uploads a workflow artifact without cutting a release, for inspection.
+Bump the workspace version in the root **`Cargo.toml`**'s `[workspace.package] version` field
+(inherited by `vocalai-cli`/`vocalai-core` via `version.workspace = true`) and push to `main`.
+`.github/workflows/release.yml` fires automatically on any push to `main` that touches
+`Cargo.toml`, but skips the release if a `vX.Y.Z` tag for that exact version already exists —
+same no-op-safe guard as above.
+
+It builds `vocalai-cli` for macOS (CoreML), Windows (CPU), and Linux (CPU) — see ADR-0013 for why
+Windows/Linux CUDA-bundled artifacts are deferred (`VAI-015`) — downloads the current
+`shmmsra/vocal-ai-models` revision from HF Hub to structurally validate it, stages each
+platform's bundle (**binary + `THIRD_PARTY_LICENSES` + `LICENSE` only, not `models/`** — see
+ADR-0013's 2026-08-21 addendum: GitHub caps release assets at 2GiB/file and the ~4GB model set
+doesn't fit), smoke-tests it, and uploads it as a release asset, creating the corresponding
+`vX.Y.Z` tag itself with GitHub-native auto-generated release notes.
+
+Manual fallback: push a `v*` tag directly (e.g. `git tag v0.1.3 && git push origin v0.1.3` —
+pushing remains your call, not an agent's; unaffected by the `Cargo.toml`-triggered path above,
+see ADR-0014). `workflow_dispatch` (optionally with a specific `hf_revision`) builds and uploads
+a workflow artifact without cutting a release, for inspection.
 
 End users get the binary *and* models together via `scripts/install.sh`/`install.ps1`
 (`README.md`'s "Install" section) — a one-line installer that downloads the release binary from

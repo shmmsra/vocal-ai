@@ -72,6 +72,7 @@ What becomes easier? What becomes harder? What new commitments does this create?
 | [0011](0011-voice-cloning-dsp-front-ends-hand-rolled-not-parity-checked.md) | `--voice` zero-shot cloning's DSP front ends are hand-rolled Rust with no automated parity gate | Accepted |
 | [0012](0012-execution-provider-selection-use-gpu-use-cpu-auto.md) | Execution-provider selection (`--use-gpu`/`--use-cpu`, CPU by default), tuning CoreML for T3's decode loop, and pinning `s3gen_estimator.onnx` to CPU | Accepted |
 | [0013](0013-hf-hub-model-distribution-and-release-packaging.md) | HuggingFace Hub model distribution + release packaging (VAI-007): bundle-at-build, CI-driven export/publish, structural-only smoke tests, CUDA bundling deferred (VAI-015) | Accepted |
+| [0014](0014-version-bump-driven-release-triggers.md) | Version-bump-driven triggers for model-publish + release pipelines (VAI-016): push+paths filters instead of a bot-pushed tag, no new secrets/tokens | Accepted |
 
 *Add new rows as ADRs accumulate.*
 
